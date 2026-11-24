@@ -430,7 +430,7 @@ UserInfo Endpoint:      https://graph.facebook.com/v24.0/me
   "tokenEndpoint": "https://graph.facebook.com/v24.0/oauth/access_token",
   "userInfoEndpoint": "https://graph.facebook.com/v24.0/me",
   "clientId": "1234567890123456",
-  "clientSecret": "abcdef1234567890abcdef1234567890"
+  "clientSecret": "your_facebook_client_secret_here"
 }
 ```
 
@@ -627,8 +627,8 @@ UserInfo Endpoint:      https://api.weixin.qq.com/sns/userinfo
   "authorizationEndpoint": "https://open.weixin.qq.com/connect/qrconnect",
   "tokenEndpoint": "https://api.weixin.qq.com/sns/oauth2/access_token",
   "userInfoEndpoint": "https://api.weixin.qq.com/sns/userinfo",
-  "clientId": "wx1234567890abcdef",
-  "clientSecret": "abcdef1234567890abcdef1234567890"
+  "clientId": "your_wechat_appid_here",
+  "clientSecret": "your_wechat_appsecret_here"
 }
 ```
 
@@ -1277,7 +1277,7 @@ UserInfo Endpoint: （留空，自动发现）
 
 Issuer URL: （留空，GitHub 不支持）
 Client ID: Iv1.1234567890abcdef
-Client Secret: 1234567890abcdef1234567890abcdef12345678
+Client Secret: your_github_client_secret_here
 
 Authorization Endpoint: https://github.com/login/oauth/authorize
 Token Endpoint: https://github.com/login/oauth/access_token
@@ -1294,7 +1294,7 @@ Provider ID: facebook
 
 Issuer URL: https://www.facebook.com
 Client ID: 1234567890123456
-Client Secret: abcdef1234567890abcdef1234567890
+Client Secret: your_facebook_client_secret_here
 
 Authorization Endpoint: https://www.facebook.com/v19.0/dialog/oauth
 Token Endpoint: https://graph.facebook.com/v19.0/oauth/access_token
