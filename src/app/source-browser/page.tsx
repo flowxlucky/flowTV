@@ -2,7 +2,7 @@
 
 'use client';
 
-import { ExternalLink, Layers, Server, Tv } from 'lucide-react';
+import { ExternalLink, Layers, Search, Server, Tv } from 'lucide-react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Suspense, useCallback, useEffect, useMemo, useState } from 'react';
 
@@ -54,11 +54,11 @@ function SourceBrowserContent() {
 
   // 搜索与排序
   const [query, setQuery] = useState(initialQuery);
+  const [confirmedQuery, setConfirmedQuery] = useState(initialQuery);
   const [mode, setMode] = useState<'category' | 'search'>(initialMode);
   const [sortBy, setSortBy] = useState<
     'default' | 'title-asc' | 'title-desc' | 'year-asc' | 'year-desc'
   >('default');
-  const [debounceId, setDebounceId] = useState<NodeJS.Timeout | null>(null);
 
   // 二级筛选（地区 / 年份 / 关键词）
   const [filterKeyword, setFilterKeyword] = useState('');
@@ -119,7 +119,7 @@ function SourceBrowserContent() {
     setActiveCategory('');
     setPage(1);
     setItems([]);
-    updateUrl(key, '', 1, mode, query);
+    updateUrl(key, '', 1, mode, confirmedQuery);
   };
 
   const handleSelectCategory = (catId: string | number) => {
@@ -132,9 +132,9 @@ function SourceBrowserContent() {
 
   const handlePageChange = (newPage: number) => {
     setPage(newPage);
-    updateUrl(activeSourceKey, activeCategory, newPage, mode, query);
-    if (mode === 'search' && query.trim()) {
-      fetchSearch(activeSourceKey, query.trim(), newPage);
+    updateUrl(activeSourceKey, activeCategory, newPage, mode, confirmedQuery);
+    if (mode === 'search' && confirmedQuery.trim()) {
+      fetchSearch(activeSourceKey, confirmedQuery.trim(), newPage);
     } else if (activeCategory) {
       fetchItems(activeSourceKey, activeCategory, newPage);
     }
@@ -162,7 +162,7 @@ function SourceBrowserContent() {
         setActiveSourceKey((prev) => {
           if (prev && list.some((s) => s.key === prev)) return prev;
           const fallback = list[0].key;
-          updateUrl(fallback, activeCategory, page, mode, query);
+          updateUrl(fallback, activeCategory, page, mode, confirmedQuery);
           return fallback;
         });
       }
@@ -171,7 +171,7 @@ function SourceBrowserContent() {
     } finally {
       setLoadingSources(false);
     }
-  }, [activeCategory, mode, page, query, updateUrl]);
+  }, [activeCategory, mode, page, confirmedQuery, updateUrl]);
 
   const fetchCategories = useCallback(async (sourceKey: string) => {
     if (!sourceKey) return;
@@ -189,7 +189,7 @@ function SourceBrowserContent() {
         setActiveCategory((prev) => {
           if (prev && list.some((c) => String(c.type_id) === String(prev))) return prev;
           const fallback = list[0].type_id;
-          updateUrl(sourceKey, fallback, page, mode, query);
+          updateUrl(sourceKey, fallback, page, mode, confirmedQuery);
           return fallback;
         });
       } else {
@@ -202,7 +202,7 @@ function SourceBrowserContent() {
     } finally {
       setLoadingCategories(false);
     }
-  }, [mode, page, query, updateUrl]);
+  }, [mode, page, confirmedQuery, updateUrl]);
 
   const fetchItems = useCallback(
     async (
@@ -300,10 +300,29 @@ function SourceBrowserContent() {
   }, [activeSourceKey, activeCategory, mode]);
 
   useEffect(() => {
-    if (activeSourceKey && mode === 'search' && query.trim()) {
-      fetchSearch(activeSourceKey, query.trim(), page);
+    if (activeSourceKey && mode === 'search' && confirmedQuery.trim()) {
+      fetchSearch(activeSourceKey, confirmedQuery.trim(), page);
     }
-  }, [activeSourceKey, mode, query]);
+  }, [activeSourceKey, mode, confirmedQuery]);
+
+  const handleSearchConfirm = () => {
+    const trimmed = query.trim();
+    if (trimmed) {
+      setConfirmedQuery(trimmed);
+      setMode('search');
+      setPage(1);
+      updateUrl(activeSourceKey, activeCategory, 1, 'search', trimmed);
+      fetchSearch(activeSourceKey, trimmed, 1);
+    } else {
+      setConfirmedQuery('');
+      setMode('category');
+      setPage(1);
+      updateUrl(activeSourceKey, activeCategory, 1, 'category', '');
+      if (activeCategory) {
+        fetchItems(activeSourceKey, activeCategory, 1);
+      }
+    }
+  };
 
   const filteredAndSorted = useMemo(() => {
     let arr = [...items];
@@ -598,57 +617,46 @@ function SourceBrowserContent() {
               <div className='flex items-center gap-2'>
                 <input
                   value={query}
-                  onChange={(e) => {
-                    const val = e.target.value;
-                    setQuery(val);
-                    if (debounceId) clearTimeout(debounceId);
-                    const id = setTimeout(() => {
-                      const newMode = val.trim() ? 'search' : 'category';
-                      setMode(newMode);
-                      setPage(1);
-                      updateUrl(activeSourceKey, activeCategory, 1, newMode, val);
-                      if (val.trim()) {
-                        fetchSearch(activeSourceKey, val.trim(), 1);
-                      } else if (activeCategory) {
-                        fetchItems(activeSourceKey, activeCategory, 1);
-                      }
-                    }, 500);
-                    setDebounceId(id);
-                  }}
+                  onChange={(e) => setQuery(e.target.value)}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter' && !e.nativeEvent.isComposing) {
-                      const newMode = query.trim() ? 'search' : 'category';
-                      setMode(newMode);
-                      setPage(1);
-                      updateUrl(activeSourceKey, activeCategory, 1, newMode, query);
-                      if (query.trim()) {
-                        fetchSearch(activeSourceKey, query.trim(), 1);
-                      } else if (activeCategory) {
-                        fetchItems(activeSourceKey, activeCategory, 1);
-                      }
+                      handleSearchConfirm();
                     }
                   }}
-                  placeholder='输入关键词并回车进行搜索；清空回车恢复分类'
-                  className='flex-1 px-3 py-2 rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm'
+                  placeholder='输入关键词并回车或点击搜索；清空确认恢复分类'
+                  className='flex-1 px-3 py-2 rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500'
                 />
+                <button
+                  type='button'
+                  onClick={handleSearchConfirm}
+                  className='px-3.5 py-2 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white text-xs sm:text-sm font-medium rounded-md whitespace-nowrap transition-colors flex items-center gap-1.5 shadow-sm'
+                  title='确认搜索'
+                >
+                  <Search className='w-4 h-4' />
+                  <span>搜索</span>
+                </button>
                 {query && (
                   <button
+                    type='button'
                     onClick={() => {
                       setQuery('');
+                      setConfirmedQuery('');
                       setMode('category');
                       setPage(1);
                       updateUrl(activeSourceKey, activeCategory, 1, 'category', '');
                       if (activeCategory)
                         fetchItems(activeSourceKey, activeCategory, 1);
                     }}
-                    className='px-3 py-2 text-xs border rounded-md whitespace-nowrap hover:bg-gray-100 dark:hover:bg-gray-700'
+                    className='px-3 py-2 text-xs border border-gray-300 dark:border-gray-600 rounded-md whitespace-nowrap hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 transition-colors'
                     title='清除'
                   >
                     清除
                   </button>
                 )}
                 <div className='hidden sm:block text-xs text-gray-500 whitespace-nowrap'>
-                  {mode === 'search' ? '搜索' : '分类'}
+                  {mode === 'search'
+                    ? `搜索: "${confirmedQuery}"`
+                    : `分类: ${categories.find((c) => String(c.type_id) === String(activeCategory))?.type_name || activeCategory}`}
                 </div>
               </div>
 
