@@ -265,6 +265,7 @@ export interface DoubanResult {
   code: number;
   message: string;
   list: DoubanItem[];
+  total?: number;
 }
 
 // 豆瓣短评数据结构

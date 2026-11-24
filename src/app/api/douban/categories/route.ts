@@ -136,6 +136,7 @@ export async function GET(request: Request) {
       code: 200,
       message: '获取成功',
       list: list,
+      total: doubanData.total || list.length,
     };
 
     const responseSize = Buffer.byteLength(JSON.stringify(response), 'utf8');

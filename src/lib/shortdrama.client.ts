@@ -107,9 +107,10 @@ export async function getRecommendedShortDramas(
 export async function getShortDramaList(
   category: number,
   page = 1,
-  size = 20
-): Promise<{ list: ShortDramaItem[]; hasMore: boolean }> {
-  const cacheKey = getCacheKey('lists', { category, page, size });
+  size = 20,
+  categoryName?: string
+): Promise<{ list: ShortDramaItem[]; hasMore: boolean; total?: number; totalPages?: number }> {
+  const cacheKey = getCacheKey('lists', { category, page, size, categoryName });
 
   try {
     // 检查缓存
@@ -119,7 +120,10 @@ export async function getShortDramaList(
     }
 
     // 使用内部 API 代理
-    const apiUrl = `${getApiBase()}/list?categoryId=${category}&page=${page}&size=${size}`;
+    let apiUrl = `${getApiBase()}/list?categoryId=${category}&page=${page}&size=${size}`;
+    if (categoryName) {
+      apiUrl += `&categoryName=${encodeURIComponent(categoryName)}`;
+    }
 
     const response = await fetch(apiUrl);
 
@@ -137,7 +141,7 @@ export async function getShortDramaList(
     return result;
   } catch (error) {
     console.error('获取短剧列表失败:', error);
-    return { list: [], hasMore: false };
+    return { list: [], hasMore: false, total: 0, totalPages: 1 };
   }
 }
 

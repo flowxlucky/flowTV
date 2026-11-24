@@ -13,83 +13,100 @@ export const fetchCache = 'force-no-store';
 async function fetchListFromSource(
   api: string,
   page: number,
-  size: number
+  size: number,
+  categoryName?: string
 ) {
-  // Step 1: 获取分类列表，找到"短剧"分类的ID
-  const listUrl = `${api}?ac=list`;
+  try {
+    // Step 1: 获取分类列表，找到"短剧"分类的ID
+    const listUrl = `${api}?ac=list`;
 
-  const listResponse = await fetch(listUrl, {
-    headers: {
-      'User-Agent': DEFAULT_USER_AGENT,
-      'Accept': 'application/json',
-    },
-    signal: AbortSignal.timeout(10000),
-  });
+    const listResponse = await fetch(listUrl, {
+      headers: {
+        'User-Agent': DEFAULT_USER_AGENT,
+        'Accept': 'application/json',
+      },
+      signal: AbortSignal.timeout(10000),
+    });
 
-  if (!listResponse.ok) {
-    throw new Error(`HTTP error! status: ${listResponse.status}`);
+    if (!listResponse.ok) {
+      throw new Error(`HTTP error! status: ${listResponse.status}`);
+    }
+
+    const listData = await listResponse.json();
+    const categories = listData.class || [];
+
+    // 优先按选中的短剧子分类名称匹配，否则查找包含"短剧"的分类
+    let shortDramaCategory = null;
+    if (categoryName && categoryName !== '全部' && categoryName !== '短剧') {
+      shortDramaCategory = categories.find((cat: any) => cat.type_name === categoryName);
+    }
+    if (!shortDramaCategory) {
+      shortDramaCategory = categories.find((cat: any) =>
+        cat.type_name && cat.type_name.includes('短剧')
+      );
+    }
+
+    if (!shortDramaCategory) {
+      return { list: [], hasMore: false, total: 0, totalPages: 1 };
+    }
+
+    const categoryId = shortDramaCategory.type_id;
+
+    // Step 2: 获取该分类的短剧列表
+    const apiUrl = `${api}?ac=detail&t=${categoryId}&pg=${page}`;
+
+    const response = await fetch(apiUrl, {
+      headers: {
+        'User-Agent': DEFAULT_USER_AGENT,
+        'Accept': 'application/json',
+      },
+      signal: AbortSignal.timeout(10000),
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+
+    const data = await response.json();
+    const items = data.list || [];
+
+    const limitedItems = items.slice(0, size);
+
+    const list = limitedItems.map((item: any) => ({
+      id: item.vod_id,
+      name: item.vod_name,
+      cover: item.vod_pic || '',
+      update_time: item.vod_time || new Date().toISOString(),
+      score: parseFloat(item.vod_score) || 0,
+      episode_count: parseInt(item.vod_remarks?.replace(/[^\d]/g, '') || '1'),
+      description: item.vod_content || item.vod_blurb || '',
+      author: item.vod_actor || '',
+      backdrop: item.vod_pic_slide || item.vod_pic || '',
+      vote_average: parseFloat(item.vod_score) || 0,
+    }));
+
+    const pageCount = Number(data.pagecount) || 1;
+    const totalCount = Number(data.total) || 0;
+    const hasMore = Number(data.page) < pageCount;
+
+    return {
+      list,
+      hasMore,
+      total: totalCount,
+      totalPages: pageCount,
+    };
+  } catch (err) {
+    console.warn(`从源 ${api} 获取短剧列表失败:`, err);
+    return { list: [], hasMore: false, total: 0, totalPages: 1 };
   }
-
-  const listData = await listResponse.json();
-  const categories = listData.class || [];
-
-  // 查找"短剧"分类（只要包含"短剧"两个字即可）
-  const shortDramaCategory = categories.find((cat: any) =>
-    cat.type_name && cat.type_name.includes('短剧')
-  );
-
-  if (!shortDramaCategory) {
-    console.log(`该源没有短剧分类`);
-    return { list: [], hasMore: false };
-  }
-
-  const categoryId = shortDramaCategory.type_id;
-  console.log(`找到短剧分类ID: ${categoryId}`);
-
-  // Step 2: 获取该分类的短剧列表
-  const apiUrl = `${api}?ac=detail&t=${categoryId}&pg=${page}`;
-
-  const response = await fetch(apiUrl, {
-    headers: {
-      'User-Agent': DEFAULT_USER_AGENT,
-      'Accept': 'application/json',
-    },
-    signal: AbortSignal.timeout(10000),
-  });
-
-  if (!response.ok) {
-    throw new Error(`HTTP error! status: ${response.status}`);
-  }
-
-  const data = await response.json();
-  const items = data.list || [];
-
-  const limitedItems = items.slice(0, size);
-
-  const list = limitedItems.map((item: any) => ({
-    id: item.vod_id,
-    name: item.vod_name,
-    cover: item.vod_pic || '',
-    update_time: item.vod_time || new Date().toISOString(),
-    score: parseFloat(item.vod_score) || 0,
-    episode_count: parseInt(item.vod_remarks?.replace(/[^\d]/g, '') || '1'),
-    description: item.vod_content || item.vod_blurb || '',
-    author: item.vod_actor || '',
-    backdrop: item.vod_pic_slide || item.vod_pic || '',
-    vote_average: parseFloat(item.vod_score) || 0,
-  }));
-
-  return {
-    list,
-    hasMore: data.page < data.pagecount,
-  };
 }
 
 // 服务端专用函数，从所有短剧源聚合数据
 async function getShortDramaListInternal(
   category: number,
   page = 1,
-  size = 20
+  size = 20,
+  categoryName?: string
 ) {
   try {
     const config = await getConfig();
@@ -104,25 +121,30 @@ async function getShortDramaListInternal(
       return await fetchListFromSource(
         'https://wwzy.tv/api.php/provide/vod',
         page,
-        size
+        size,
+        categoryName
       );
     }
 
     // 有配置短剧源，聚合所有源的数据
     const results = await Promise.allSettled(
       shortDramaSources.map(source => {
-        return fetchListFromSource(source.api, page, size);
+        return fetchListFromSource(source.api, page, size, categoryName);
       })
     );
 
     // 合并所有成功的结果
     const allItems: any[] = [];
     let hasMore = false;
+    let maxTotalPages = 1;
+    let maxTotalItems = 0;
 
     results.forEach((result) => {
       if (result.status === 'fulfilled') {
         allItems.push(...result.value.list);
         hasMore = hasMore || result.value.hasMore;
+        if (result.value.totalPages > maxTotalPages) maxTotalPages = result.value.totalPages;
+        if (result.value.total > maxTotalItems) maxTotalItems = result.value.total;
       }
     });
 
@@ -139,6 +161,8 @@ async function getShortDramaListInternal(
     return {
       list: uniqueItems.slice(0, size),
       hasMore,
+      total: maxTotalItems,
+      totalPages: maxTotalPages,
     };
   } catch (error) {
     console.error('获取短剧列表失败:', error);
@@ -147,11 +171,12 @@ async function getShortDramaListInternal(
       return await fetchListFromSource(
         'https://wwzy.tv/api.php/provide/vod',
         page,
-        size
+        size,
+        categoryName
       );
     } catch (fallbackError) {
       console.error('默认源也失败:', fallbackError);
-      return { list: [], hasMore: false };
+      return { list: [], hasMore: false, total: 0, totalPages: 1 };
     }
   }
 }
@@ -164,6 +189,7 @@ export async function GET(request: NextRequest) {
   try {
     const { searchParams } = request.nextUrl;
     const categoryId = searchParams.get('categoryId');
+    const categoryName = searchParams.get('categoryName') || '';
     const page = searchParams.get('page');
     const size = searchParams.get('size');
 
@@ -171,6 +197,7 @@ export async function GET(request: NextRequest) {
     console.log('🚀 [SHORTDRAMA API] 收到请求:', {
       timestamp: new Date().toISOString(),
       categoryId,
+      categoryName,
       page,
       size,
       userAgent: request.headers.get('user-agent'),
@@ -220,7 +247,7 @@ export async function GET(request: NextRequest) {
       return NextResponse.json(errorResponse, { status: 400 });
     }
 
-    const result = await getShortDramaListInternal(category, pageNum, pageSize);
+    const result = await getShortDramaListInternal(category, pageNum, pageSize, categoryName);
 
     // 记录返回的数据
     console.log('✅ [SHORTDRAMA API] 返回数据:', {

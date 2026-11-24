@@ -13,38 +13,39 @@ const DEFAULT_SHORT_DRAMA_API = 'https://wwzy.tv/api.php/provide/vod';
 
 // 从单个源获取短剧分类
 async function getCategoriesFromSource(api: string): Promise<{ type_id: number; type_name: string }[]> {
-  const response = await fetch(`${api}?ac=list`, {
-    headers: {
-      'User-Agent': DEFAULT_USER_AGENT,
-      'Accept': 'application/json',
-    },
-    signal: AbortSignal.timeout(10000),
-  });
+  try {
+    const response = await fetch(`${api}?ac=list`, {
+      headers: {
+        'User-Agent': DEFAULT_USER_AGENT,
+        'Accept': 'application/json',
+      },
+      signal: AbortSignal.timeout(10000),
+    });
 
-  if (!response.ok) {
-    throw new Error(`HTTP error! status: ${response.status}`);
+    if (!response.ok) {
+      return [];
+    }
+
+    const data = await response.json();
+    const categories = data.class || [];
+
+    // 严格筛选包含"短剧"的分类，杜绝将其他非短剧视频分类混入
+    const shortDramaCategories = categories.filter((cat: any) =>
+      cat?.type_name && cat.type_name.includes('短剧')
+    );
+
+    if (shortDramaCategories.length > 0) {
+      return shortDramaCategories.map((cat: any) => ({
+        type_id: cat.type_id,
+        type_name: cat.type_name.trim(),
+      }));
+    }
+
+    return [];
+  } catch (e) {
+    console.warn(`获取源 ${api} 分类失败:`, e);
+    return [];
   }
-
-  const data = await response.json();
-  const categories = data.class || [];
-
-  // 筛选包含"短剧"的分类
-  const shortDramaCategories = categories.filter((cat: any) =>
-    cat.type_name && cat.type_name.includes('短剧')
-  );
-
-  if (shortDramaCategories.length > 0) {
-    return shortDramaCategories.map((cat: any) => ({
-      type_id: cat.type_id,
-      type_name: cat.type_name,
-    }));
-  }
-
-  // 如果没有找到包含"短剧"的分类，返回所有分类供用户查看
-  return categories.map((cat: any) => ({
-    type_id: cat.type_id,
-    type_name: cat.type_name,
-  }));
 }
 
 // 从配置的短剧源获取分类
@@ -79,10 +80,24 @@ async function getShortDramaCategoriesInternal() {
     });
 
     if (allCategories.length > 0) {
-      // 按 type_id 去重
-      const uniqueCategories = Array.from(
-        new Map(allCategories.map(cat => [`${cat.type_id}_${cat.type_name}`, cat])).values()
-      );
+      // 严格按名称去重，避免多个视频源产生重复的同名分类（如出现10个"短剧"）
+      const categoryMap = new Map<string, { type_id: number; type_name: string }>();
+      for (const cat of allCategories) {
+        const name = cat.type_name?.trim();
+        if (name && !categoryMap.has(name)) {
+          categoryMap.set(name, {
+            type_id: cat.type_id,
+            type_name: name,
+          });
+        }
+      }
+      const uniqueCategories = Array.from(categoryMap.values());
+      // 排序优化：若有纯"短剧"或"全部短剧"，置顶在最前
+      uniqueCategories.sort((a, b) => {
+        if (a.type_name === '短剧') return -1;
+        if (b.type_name === '短剧') return 1;
+        return a.type_name.localeCompare(b.type_name, 'zh-CN');
+      });
       return uniqueCategories;
     }
 
@@ -91,7 +106,22 @@ async function getShortDramaCategoriesInternal() {
 
   // 没有配置短剧源或全部失败，使用默认源
   console.log(`📋 [CATEGORIES] 使用默认短剧源: ${DEFAULT_SHORT_DRAMA_API}`);
-  return await getCategoriesFromSource(DEFAULT_SHORT_DRAMA_API);
+  const defaultCats = await getCategoriesFromSource(DEFAULT_SHORT_DRAMA_API);
+  if (defaultCats.length > 0) {
+    const categoryMap = new Map<string, { type_id: number; type_name: string }>();
+    for (const cat of defaultCats) {
+      const name = cat.type_name?.trim();
+      if (name && !categoryMap.has(name)) {
+        categoryMap.set(name, {
+          type_id: cat.type_id,
+          type_name: name,
+        });
+      }
+    }
+    return Array.from(categoryMap.values());
+  }
+  // 兜底返回一个默认短剧分类
+  return [{ type_id: 1, type_name: '短剧' }];
 }
 
 export async function GET() {
