@@ -504,6 +504,9 @@ function SourceBrowserContent() {
   };
 
   const goPlay = (item: Item, newTab: boolean = false) => {
+    // 触发播放后，自动关闭当前弹窗
+    setPreviewOpen(false);
+
     const params = new URLSearchParams();
     params.set('source', activeSourceKey);
     params.set('id', item.id);
@@ -1210,7 +1213,10 @@ function SourceBrowserContent() {
                   </button>
                   <button
                     onClick={() => {
-                      if (previewItem) goPlay(previewItem);
+                      if (previewItem) {
+                        setPreviewOpen(false);
+                        goPlay(previewItem);
+                      }
                     }}
                     className='group relative inline-flex items-center justify-center gap-1.5 sm:gap-2 px-3.5 sm:px-5 py-2.5 rounded-xl bg-linear-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white text-sm font-semibold shadow-lg shadow-blue-500/30 hover:shadow-xl hover:shadow-blue-500/40 transition-all duration-300 hover:scale-105'
                   >
@@ -1222,7 +1228,10 @@ function SourceBrowserContent() {
                   </button>
                   <button
                     onClick={() => {
-                      if (previewItem) goPlay(previewItem, true);
+                      if (previewItem) {
+                        setPreviewOpen(false);
+                        goPlay(previewItem, true);
+                      }
                     }}
                     className='group relative inline-flex items-center justify-center gap-1.5 sm:gap-2 px-3.5 sm:px-5 py-2.5 rounded-xl bg-linear-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white text-sm font-semibold shadow-lg shadow-emerald-500/30 hover:shadow-xl hover:shadow-emerald-500/40 transition-all duration-300 hover:scale-105'
                   >
