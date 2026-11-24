@@ -2,58 +2,78 @@
 
 'use client';
 
-import { ChevronUp, Filter, Search } from 'lucide-react';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { ChevronUp, Search, Server, X } from 'lucide-react';
+import { useCallback, useEffect, useState } from 'react';
 
 import {
-  getShortDramaCategories,
   getShortDramaList,
   searchShortDramas,
 } from '@/lib/shortdrama.client';
 import { cleanExpiredCache } from '@/lib/shortdrama-cache';
-import { ShortDramaCategory, ShortDramaItem } from '@/lib/types';
+import { ShortDramaItem } from '@/lib/types';
 
 import PageLayout from '@/components/PageLayout';
 import Pagination from '@/components/Pagination';
 import ShortDramaCard from '@/components/ShortDramaCard';
 
-// 统一每页条数：24条（手机端2列、平板3-4列、PC端5-6列均可完美整除整行对齐）
+// 统一每页条数：24条
 const PAGE_SIZE = 24;
 
+interface SourceItem {
+  key: string;
+  name: string;
+  api: string;
+  type?: string;
+}
+
 export default function ShortDramaPage() {
-  const [categories, setCategories] = useState<ShortDramaCategory[]>([]);
-  const [selectedCategory, setSelectedCategory] = useState<number | null>(null);
-  const [selectedCategoryName, setSelectedCategoryName] = useState<string>('');
+  const [sources, setSources] = useState<SourceItem[]>([]);
+  const [loadingSources, setLoadingSources] = useState(true);
+  const [activeSourceKey, setActiveSourceKey] = useState<string>('all');
+
   const [dramas, setDramas] = useState<ShortDramaItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [totalItems, setTotalItems] = useState<number | undefined>(undefined);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [isSearchMode, setIsSearchMode] = useState(false);
+
+  // 搜索相关状态：分离输入草稿与确认搜索词，彻底杜绝打字过程自动识别
+  const [searchDraft, setSearchDraft] = useState('');
+  const [confirmedQuery, setConfirmedQuery] = useState('');
+
   // 返回顶部按钮显示状态
   const [showBackToTop, setShowBackToTop] = useState(false);
 
   // 骨架屏占位数据
   const skeletonArray = Array.from({ length: PAGE_SIZE }, (_, i) => i);
 
-  // 获取分类列表
+  // 1. 获取可用来源站列表
   useEffect(() => {
     cleanExpiredCache().catch(console.error);
 
-    const fetchCategories = async () => {
-      const cats = await getShortDramaCategories();
-      setCategories(cats);
-      // 自动选中第一个分类
-      if (cats.length > 0 && !selectedCategory) {
-        setSelectedCategory(cats[0].type_id);
-        setSelectedCategoryName(cats[0].type_name);
+    const fetchSources = async () => {
+      setLoadingSources(true);
+      try {
+        const res = await fetch('/api/shortdrama/sources', { cache: 'no-store' });
+        if (res.ok) {
+          const data = await res.json();
+          const list: SourceItem[] = data.sources || [];
+          setSources(list);
+          if (list.length > 0) {
+            setActiveSourceKey(list[0].key);
+          }
+        }
+      } catch (err) {
+        console.error('获取短剧来源站失败:', err);
+      } finally {
+        setLoadingSources(false);
       }
     };
-    fetchCategories();
+
+    fetchSources();
   }, []);
 
-  // 监听滚动位置，控制返回顶部按钮显示
+  // 2. 监听滚动位置，控制返回顶部按钮显示
   useEffect(() => {
     const handleScroll = () => {
       const scrollTop = window.scrollY || document.documentElement.scrollTop || document.body.scrollTop || 0;
@@ -69,11 +89,9 @@ export default function ShortDramaPage() {
     };
   }, []);
 
-  // 加载短剧列表（标准单页受限加载）
+  // 3. 加载短剧列表
   const loadDramas = useCallback(
-    async (pageNum: number) => {
-      if (!selectedCategory && !isSearchMode) return;
-
+    async (pageNum: number, query: string, sourceKey: string) => {
       setLoading(true);
       try {
         let result: {
@@ -83,14 +101,16 @@ export default function ShortDramaPage() {
           totalPages?: number;
         };
 
-        if (isSearchMode && searchQuery.trim()) {
-          result = await searchShortDramas(searchQuery.trim(), pageNum, PAGE_SIZE);
+        const trimmedQuery = query.trim();
+        if (trimmedQuery) {
+          result = await searchShortDramas(trimmedQuery, pageNum, PAGE_SIZE);
         } else {
           result = await getShortDramaList(
-            selectedCategory!,
+            1,
             pageNum,
             PAGE_SIZE,
-            selectedCategoryName
+            undefined,
+            sourceKey
           );
         }
 
@@ -101,7 +121,7 @@ export default function ShortDramaPage() {
         if (result.totalPages && result.totalPages > 0) {
           setTotalPages(result.totalPages);
         } else if (result.total && result.total > 0) {
-          setTotalPages(Math.ceil(result.total / PAGE_SIZE));
+          setTotalPages(Math.max(1, Math.ceil(result.total / PAGE_SIZE)));
         } else if (result.hasMore) {
           setTotalPages((prev) => Math.max(prev, pageNum + 1));
         } else {
@@ -114,30 +134,59 @@ export default function ShortDramaPage() {
           setTotalItems(undefined);
         }
       } catch (error) {
-        console.error('加载短剧失败:', error);
+        console.error('加载短剧列表失败:', error);
         setDramas([]);
       } finally {
         setLoading(false);
       }
     },
-    [selectedCategory, selectedCategoryName, searchQuery, isSearchMode]
+    []
   );
 
-  // 当分类或搜索模式发生变化时，重置回第1页并重新加载
+  // 4. 当选中的站源或确认的搜索词改变时，重置回第1页并重新加载
   useEffect(() => {
-    if (selectedCategory && !isSearchMode) {
-      setPage(1);
-      loadDramas(1);
-    }
-  }, [selectedCategory, selectedCategoryName, isSearchMode]);
+    setPage(1);
+    loadDramas(1, confirmedQuery, activeSourceKey);
+  }, [activeSourceKey, confirmedQuery, loadDramas]);
 
-  // 当页码改变时加载对应页数据
+  // 5. 切换来源站
+  const handleSelectSource = (key: string) => {
+    if (activeSourceKey === key) return;
+    setActiveSourceKey(key);
+    // 切换来源站时清空搜索，展示该来源站短剧
+    setSearchDraft('');
+    setConfirmedQuery('');
+  };
+
+  // 6. 确认搜索（回车或点击确认按钮触发，输入中不做任何自动识别）
+  const handleConfirmSearch = () => {
+    const trimmed = searchDraft.trim();
+    if (trimmed === confirmedQuery) return;
+    setConfirmedQuery(trimmed);
+  };
+
+  // 清空搜索输入并立即确认恢复
+  const handleClearSearch = () => {
+    setSearchDraft('');
+    if (confirmedQuery) {
+      setConfirmedQuery('');
+    }
+  };
+
+  // 键盘回车监听（严禁中文输入法敲拼音时误触发）
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter' && !e.nativeEvent.isComposing) {
+      e.preventDefault();
+      handleConfirmSearch();
+    }
+  };
+
+  // 7. 分页切换事件
   const handlePageChange = (newPage: number) => {
     if (newPage === page || loading) return;
     setPage(newPage);
-    loadDramas(newPage);
+    loadDramas(newPage, confirmedQuery, activeSourceKey);
 
-    // 页面回滚至顶部
     try {
       window.scrollTo({ top: 0, behavior: 'smooth' });
       document.documentElement.scrollTo({ top: 0, behavior: 'smooth' });
@@ -145,40 +194,6 @@ export default function ShortDramaPage() {
     } catch {
       window.scrollTo(0, 0);
     }
-  };
-
-  // 搜索处理
-  const handleSearch = (query: string) => {
-    setSearchQuery(query);
-    const hasQuery = Boolean(query.trim());
-    setIsSearchMode(hasQuery);
-    setPage(1);
-
-    if (hasQuery) {
-      setLoading(true);
-      searchShortDramas(query.trim(), 1, PAGE_SIZE)
-        .then((result) => {
-          setDramas(result.list || []);
-          if (result.totalPages) setTotalPages(result.totalPages);
-          else if (result.hasMore) setTotalPages(2);
-          else setTotalPages(1);
-          setTotalItems(result.total);
-        })
-        .catch((err) => {
-          console.error('搜索短剧失败:', err);
-          setDramas([]);
-        })
-        .finally(() => setLoading(false));
-    }
-  };
-
-  // 选择分类
-  const handleSelectCategory = (cat: ShortDramaCategory) => {
-    if (selectedCategory === cat.type_id && !isSearchMode) return;
-    setSelectedCategory(cat.type_id);
-    setSelectedCategoryName(cat.type_name);
-    setIsSearchMode(false);
-    setSearchQuery('');
   };
 
   // 返回顶部功能
@@ -192,6 +207,8 @@ export default function ShortDramaPage() {
     }
   };
 
+  const currentSourceName = sources.find((s) => s.key === activeSourceKey)?.name || '短剧站源';
+
   return (
     <PageLayout activePath="/shortdrama">
       <div className="min-h-screen -mt-6 md:mt-0 pb-20">
@@ -202,68 +219,109 @@ export default function ShortDramaPage() {
               短剧频道
             </h1>
             <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">
-              精彩短剧，品质精选
+              按站源精选浏览，畅享精彩短剧
             </p>
           </div>
 
-          {/* 搜索栏 */}
+          {/* 搜索栏：带独立确认按钮，输入过程中不触发搜索 */}
           <div className="mb-6">
-            <div className="relative group">
-              <Search className="absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-gray-400 dark:text-gray-500 transition-all duration-300 group-focus-within:text-purple-500 dark:group-focus-within:text-purple-400 group-focus-within:scale-110" />
-              <input
-                type="text"
-                placeholder="搜索短剧名称..."
-                className="w-full rounded-xl border border-gray-200 bg-white/80 pl-11 pr-4 py-3 text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-400 focus:border-transparent focus:bg-white shadow-xs hover:shadow-md focus:shadow-lg dark:bg-gray-800/80 dark:text-white dark:placeholder-gray-500 dark:border-gray-700 dark:focus:bg-gray-800 dark:focus:ring-purple-500 transition-all duration-300"
-                value={searchQuery}
-                onChange={(e) => handleSearch(e.target.value)}
-              />
+            <div className="relative flex items-center gap-2">
+              <div className="relative flex-1 group">
+                <Search className="absolute left-3.5 top-1/2 h-5 w-5 -translate-y-1/2 text-gray-400 dark:text-gray-500 transition-all duration-300 group-focus-within:text-purple-500 dark:group-focus-within:text-purple-400" />
+                <input
+                  type="text"
+                  placeholder="输入短剧名称并回车或点击确认搜索..."
+                  className="w-full rounded-xl border border-gray-200 bg-white/90 pl-11 pr-10 py-3 text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-400 focus:border-transparent focus:bg-white shadow-xs hover:shadow-md focus:shadow-lg dark:bg-gray-800/90 dark:text-white dark:placeholder-gray-500 dark:border-gray-700 dark:focus:bg-gray-800 dark:focus:ring-purple-500 transition-all duration-300"
+                  value={searchDraft}
+                  onChange={(e) => setSearchDraft(e.target.value)}
+                  onKeyDown={handleKeyDown}
+                />
+                {searchDraft && (
+                  <button
+                    type="button"
+                    onClick={handleClearSearch}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors p-1 rounded-full hover:bg-gray-100 dark:hover:bg-gray-700"
+                    title="清空输入"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                )}
+              </div>
+
+              {/* 显式确认搜索按钮 */}
+              <button
+                type="button"
+                onClick={handleConfirmSearch}
+                className="flex items-center gap-1.5 px-5 py-3 rounded-xl bg-linear-to-r from-purple-500 via-purple-600 to-pink-500 hover:from-purple-600 hover:to-pink-600 text-white text-sm font-semibold shadow-md hover:shadow-lg hover:scale-105 active:scale-95 transition-all duration-200 shrink-0"
+              >
+                <Search className="w-4 h-4" />
+                <span>搜索</span>
+              </button>
             </div>
           </div>
 
-          {/* 分类筛选（去重并归拢后显示） */}
-          {!isSearchMode && categories.length > 0 && (
-            <div className="mb-6">
-              <div className="flex items-center space-x-2.5 mb-4">
-                <div className="w-9 h-9 rounded-xl bg-linear-to-br from-purple-500 via-purple-600 to-pink-500 flex items-center justify-center shadow-lg shadow-purple-500/30">
-                  <Filter className="h-4 w-4 text-white" />
+          {/* 选择来源站一栏（复刻源浏览器图2样式） */}
+          <div className="bg-linear-to-br from-white via-emerald-50/30 to-white dark:from-gray-800 dark:via-emerald-900/10 dark:to-gray-800 rounded-2xl shadow-lg border border-gray-200/80 dark:border-gray-700/80 backdrop-blur-sm mb-6">
+            <div className="px-5 py-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
+              <div className="flex items-center gap-2.5 font-semibold text-gray-900 dark:text-white">
+                <div className="w-8 h-8 rounded-lg bg-emerald-100 dark:bg-emerald-900/30 flex items-center justify-center">
+                  <Server className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
                 </div>
-                <span className="text-base font-bold text-gray-900 dark:text-gray-100">
-                  分类筛选
-                </span>
-                <div className="flex-1"></div>
-                <span className="text-xs px-2.5 py-1 rounded-full bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 font-medium">
-                  {categories.length} 个分类
-                </span>
+                <span>选择来源站</span>
               </div>
-              <div className="flex flex-wrap gap-2.5">
-                {categories.map((category, index) => {
-                  const isSelected = selectedCategory === category.type_id;
-                  return (
-                    <button
-                      key={`${category.type_id}-${category.type_name}-${index}`}
-                      onClick={() => handleSelectCategory(category)}
-                      className={`group relative overflow-hidden rounded-xl px-5 py-2.5 text-sm font-medium transition-all duration-300 transform hover:scale-105 ${
-                        isSelected
-                          ? 'bg-linear-to-r from-purple-500 via-purple-600 to-pink-500 text-white shadow-lg shadow-purple-500/40'
-                          : 'bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 border-2 border-gray-200 dark:border-gray-700 hover:border-purple-300 dark:hover:border-purple-600 hover:shadow-md'
-                      }`}
-                    >
-                      {/* 激活状态的光泽效果 */}
-                      {isSelected && (
-                        <div className="absolute inset-0 bg-linear-to-r from-transparent via-white/20 to-transparent -translate-x-full group-hover:translate-x-full transition-transform duration-700"></div>
-                      )}
-                      {!isSelected && (
-                        <div className="absolute inset-0 bg-linear-to-r from-purple-50 via-pink-50 to-purple-50 dark:from-purple-900/20 dark:via-pink-900/20 dark:to-purple-900/20 opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
-                      )}
-                      <span className="relative z-10">{category.type_name}</span>
-                    </button>
-                  );
-                })}
-              </div>
+              {!loadingSources && sources.length > 0 && (
+                <span className="text-xs px-2.5 py-1 rounded-full bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300 font-medium">
+                  {sources.length} 个
+                </span>
+              )}
+            </div>
+            <div className="p-5">
+              {loadingSources ? (
+                <div className="flex items-center gap-2 text-sm text-gray-500">
+                  <div className="w-4 h-4 border-2 border-emerald-600 border-t-transparent rounded-full animate-spin"></div>
+                  <span>加载站源列表中...</span>
+                </div>
+              ) : sources.length === 0 ? (
+                <p className="text-sm text-gray-500">暂无可用来源站</p>
+              ) : (
+                <div className="flex flex-wrap gap-2.5">
+                  {sources.map((s) => {
+                    const isSelected = activeSourceKey === s.key;
+                    return (
+                      <button
+                        key={s.key}
+                        onClick={() => handleSelectSource(s.key)}
+                        className={`group relative px-4 py-2.5 rounded-xl text-sm font-medium border-2 transition-all duration-300 transform hover:scale-105 ${
+                          isSelected
+                            ? 'bg-emerald-600 border-emerald-600 text-white shadow-lg shadow-emerald-600/30 font-semibold'
+                            : 'border-gray-200 dark:border-gray-700 hover:border-emerald-300 dark:hover:border-emerald-600 hover:shadow-md bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300'
+                        }`}
+                      >
+                        {s.name}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* 搜索提示状态 */}
+          {confirmedQuery && (
+            <div className="flex items-center justify-between mb-4 px-4 py-2.5 bg-purple-50 dark:bg-purple-900/20 border border-purple-200 dark:border-purple-800 rounded-xl">
+              <span className="text-sm text-purple-700 dark:text-purple-300">
+                正在展示关键词 <span className="font-bold">“{confirmedQuery}”</span> 的搜索结果
+              </span>
+              <button
+                onClick={handleClearSearch}
+                className="text-xs text-purple-600 hover:text-purple-800 dark:text-purple-400 dark:hover:text-purple-200 underline font-medium"
+              >
+                清空搜索，返回【{currentSourceName}】
+              </button>
             </div>
           )}
 
-          {/* 短剧标准网格（彻底移除不稳定与导致空白Bug的 VirtualGrid，使用现代原生 CSS Grid） */}
+          {/* 短剧卡片网格 */}
           <div className="min-h-[480px]">
             {loading ? (
               <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
@@ -292,19 +350,21 @@ export default function ShortDramaPage() {
                       <Search className="w-10 h-10 text-gray-400 dark:text-gray-500" />
                     </div>
                     <h3 className="text-lg font-bold text-gray-800 dark:text-gray-200">
-                      {isSearchMode ? '未找到相关短剧' : '暂无短剧数据'}
+                      {confirmedQuery
+                        ? '未找到相关短剧'
+                        : `【${currentSourceName}】暂无短剧数据`}
                     </h3>
                     <p className="text-sm text-gray-500 dark:text-gray-400">
-                      {isSearchMode
-                        ? '请尝试换用其他关键词或切换分类'
-                        : '当前分类暂无数据，可点击其他分类查看'}
+                      {confirmedQuery
+                        ? '请尝试换用其他关键词或切换来源站'
+                        : '该来源站未检索到短剧分类，请点击其他来源站查看'}
                     </p>
-                    {isSearchMode && (
+                    {confirmedQuery && (
                       <button
-                        onClick={() => handleSearch('')}
+                        onClick={handleClearSearch}
                         className="mt-2 px-5 py-2 bg-linear-to-r from-purple-500 to-pink-500 text-white rounded-lg text-sm font-medium shadow-md hover:scale-105 transition-all"
                       >
-                        清空搜索
+                        清空搜索条件
                       </button>
                     )}
                   </div>
@@ -313,7 +373,7 @@ export default function ShortDramaPage() {
             )}
           </div>
 
-          {/* 标准受限分页条（与源浏览器界面与搜索界面完全一致） */}
+          {/* 标准受限分页条 */}
           {!loading && totalPages > 1 && (
             <div className="flex justify-center mt-10 mb-8">
               <Pagination

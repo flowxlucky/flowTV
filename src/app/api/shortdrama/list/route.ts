@@ -101,20 +101,44 @@ async function fetchListFromSource(
   }
 }
 
-// 服务端专用函数，从所有短剧源聚合数据
+// 服务端专用函数，支持指定单一站源或聚合所有短剧源
 async function getShortDramaListInternal(
   category: number,
   page = 1,
   size = 20,
-  categoryName?: string
+  categoryName?: string,
+  sourceKey?: string
 ) {
   try {
     const config = await getConfig();
 
+    // 若指定了单一来源站，直接从该来源站获取短剧
+    if (sourceKey && sourceKey !== 'all') {
+      const targetSource = (config.SourceConfig || []).find(
+        (s) => s.key === sourceKey && !s.disabled && s.api?.trim()
+      );
+      if (targetSource) {
+        console.log(`📋 [LIST] 从指定站源获取短剧: ${targetSource.name} (${targetSource.api})`);
+        return await fetchListFromSource(
+          targetSource.api,
+          page,
+          size,
+          categoryName
+        );
+      }
+    }
+
     // 筛选出所有启用的短剧源
-    const shortDramaSources = config.SourceConfig.filter(
+    let shortDramaSources = config.SourceConfig.filter(
       source => source.type === 'shortdrama' && !source.disabled
     );
+
+    // 如果未单独配置 shortdrama 源，优先使用所有启用源
+    if (shortDramaSources.length === 0) {
+      shortDramaSources = config.SourceConfig.filter(
+        source => !source.disabled && source.api?.trim()
+      ).slice(0, 6);
+    }
 
     // 如果没有配置短剧源，使用默认源
     if (shortDramaSources.length === 0) {
@@ -126,7 +150,7 @@ async function getShortDramaListInternal(
       );
     }
 
-    // 有配置短剧源，聚合所有源的数据
+    // 聚合源数据
     const results = await Promise.allSettled(
       shortDramaSources.map(source => {
         return fetchListFromSource(source.api, page, size, categoryName);
@@ -166,7 +190,6 @@ async function getShortDramaListInternal(
     };
   } catch (error) {
     console.error('获取短剧列表失败:', error);
-    // fallback到默认源
     try {
       return await fetchListFromSource(
         'https://wwzy.tv/api.php/provide/vod',
@@ -190,6 +213,7 @@ export async function GET(request: NextRequest) {
     const { searchParams } = request.nextUrl;
     const categoryId = searchParams.get('categoryId');
     const categoryName = searchParams.get('categoryName') || '';
+    const sourceKey = searchParams.get('sourceKey') || 'all';
     const page = searchParams.get('page');
     const size = searchParams.get('size');
 
@@ -198,6 +222,7 @@ export async function GET(request: NextRequest) {
       timestamp: new Date().toISOString(),
       categoryId,
       categoryName,
+      sourceKey,
       page,
       size,
       userAgent: request.headers.get('user-agent'),
@@ -205,28 +230,9 @@ export async function GET(request: NextRequest) {
       url: request.url
     });
 
-    if (!categoryId) {
-      const errorResponse = { error: '缺少必要参数: categoryId' };
-      const responseSize = Buffer.byteLength(JSON.stringify(errorResponse), 'utf8');
-
-      recordRequest({
-        timestamp: startTime,
-        method: 'GET',
-        path: '/api/shortdrama/list',
-        statusCode: 400,
-        duration: Date.now() - startTime,
-        memoryUsed: (process.memoryUsage().heapUsed - startMemory) / 1024 / 1024,
-        dbQueries: getDbQueryCount(),
-        requestSize: 0,
-        responseSize,
-      });
-
-      return NextResponse.json(errorResponse, { status: 400 });
-    }
-
-    const category = parseInt(categoryId);
+    const category = categoryId ? parseInt(categoryId) : 1;
     const pageNum = page ? parseInt(page) : 1;
-    const pageSize = size ? parseInt(size) : 20;
+    const pageSize = size ? parseInt(size) : 24;
 
     if (isNaN(category) || isNaN(pageNum) || isNaN(pageSize)) {
       const errorResponse = { error: '参数格式错误' };
@@ -247,7 +253,7 @@ export async function GET(request: NextRequest) {
       return NextResponse.json(errorResponse, { status: 400 });
     }
 
-    const result = await getShortDramaListInternal(category, pageNum, pageSize, categoryName);
+    const result = await getShortDramaListInternal(category, pageNum, pageSize, categoryName, sourceKey);
 
     // 记录返回的数据
     console.log('✅ [SHORTDRAMA API] 返回数据:', {

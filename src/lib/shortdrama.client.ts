@@ -103,14 +103,15 @@ export async function getRecommendedShortDramas(
   }
 }
 
-// 获取分类短剧列表（分页）
+// 获取短剧列表（支持按单一来源站或分类分页获取）
 export async function getShortDramaList(
   category: number,
   page = 1,
   size = 20,
-  categoryName?: string
+  categoryName?: string,
+  sourceKey?: string
 ): Promise<{ list: ShortDramaItem[]; hasMore: boolean; total?: number; totalPages?: number }> {
-  const cacheKey = getCacheKey('lists', { category, page, size, categoryName });
+  const cacheKey = getCacheKey('lists', { category, page, size, categoryName, sourceKey });
 
   try {
     // 检查缓存
@@ -123,6 +124,9 @@ export async function getShortDramaList(
     let apiUrl = `${getApiBase()}/list?categoryId=${category}&page=${page}&size=${size}`;
     if (categoryName) {
       apiUrl += `&categoryName=${encodeURIComponent(categoryName)}`;
+    }
+    if (sourceKey) {
+      apiUrl += `&sourceKey=${encodeURIComponent(sourceKey)}`;
     }
 
     const response = await fetch(apiUrl);

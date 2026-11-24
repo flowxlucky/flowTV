@@ -20,6 +20,9 @@ export default function ReleaseCalendarPage() {
     search: '',
   });
 
+  // 搜索草稿状态，防止输入过程自动过滤跳动
+  const [searchDraft, setSearchDraft] = useState('');
+
   // 分页状态
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 20;
@@ -316,18 +319,46 @@ export default function ReleaseCalendarPage() {
               </select>
             </div>
 
-            {/* 搜索框 */}
+            {/* 搜索框：支持确认按钮与回车触发 */}
             <div>
               <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">搜索</label>
-              <div className="relative">
-                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 dark:text-gray-500 w-4 h-4" />
-                <input
-                  type="text"
-                  placeholder="搜索标题、导演、演员..."
-                  value={filters.search}
-                  onChange={(e) => setFilters(prev => ({ ...prev, search: e.target.value }))}
-                  className="w-full pl-10 p-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-500 dark:placeholder-gray-400"
-                />
+              <div className="flex items-center gap-2">
+                <div className="relative flex-1">
+                  <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 dark:text-gray-500 w-4 h-4" />
+                  <input
+                    type="text"
+                    placeholder="输入标题、导演、演员并回车..."
+                    value={searchDraft}
+                    onChange={(e) => setSearchDraft(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && !e.nativeEvent.isComposing) {
+                        e.preventDefault();
+                        setFilters((prev) => ({ ...prev, search: searchDraft.trim() }));
+                      }
+                    }}
+                    className="w-full pl-10 pr-8 p-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-500 dark:placeholder-gray-400 text-sm"
+                  />
+                  {searchDraft && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSearchDraft('');
+                        setFilters((prev) => ({ ...prev, search: '' }));
+                      }}
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 text-xs p-1"
+                      title="清空搜索"
+                    >
+                      ✕
+                    </button>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setFilters((prev) => ({ ...prev, search: searchDraft.trim() }))}
+                  className="px-3.5 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium shadow-xs transition-colors shrink-0"
+                >
+                  搜索
+                </button>
               </div>
             </div>
           </div>

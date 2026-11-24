@@ -1523,58 +1523,69 @@ function SearchPageClient() {
           </div>
 
           <form onSubmit={handleSearch} className='max-w-2xl mx-auto'>
-            <div className='relative group'>
-              {/* 搜索图标 - 增强动画 */}
-              <Search className='absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-gray-400 dark:text-gray-500 transition-all duration-300 group-focus-within:text-green-500 dark:group-focus-within:text-green-400 group-focus-within:scale-110' />
+            <div className='flex items-center gap-2.5'>
+              <div className='relative flex-1 group'>
+                {/* 搜索图标 - 增强动画 */}
+                <Search className='absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-gray-400 dark:text-gray-500 transition-all duration-300 group-focus-within:text-green-500 dark:group-focus-within:text-green-400 group-focus-within:scale-110' />
 
-              {/* 搜索框 - 美化版 */}
-              <input
-                id='searchInput'
-                type='text'
-                value={searchQuery}
-                onChange={handleInputChange}
-                onFocus={handleInputFocus}
-                placeholder={searchType === 'video' ? '🎬 搜索电影、电视剧...' : searchType === 'netdisk' ? '💾 搜索网盘资源...' : searchType === 'youtube' ? '📺 搜索YouTube视频...' : searchType === 'bilibili' ? '📺 搜索Bilibili视频...' : '🎭 搜索演员姓名...'}
-                autoComplete="off"
-                className='w-full h-14 rounded-xl bg-white/90 py-4 pl-12 pr-14 text-sm text-gray-700 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-green-400 focus:bg-white border-2 border-gray-200/80 shadow-lg hover:shadow-xl focus:shadow-2xl focus:border-green-400 transition-all duration-300 dark:bg-gray-800/90 dark:text-gray-300 dark:placeholder-gray-500 dark:focus:bg-gray-800 dark:border-gray-700 dark:focus:border-green-500 backdrop-blur-sm'
-              />
+                {/* 搜索框 - 美化版 */}
+                <input
+                  id='searchInput'
+                  type='text'
+                  value={searchQuery}
+                  onChange={handleInputChange}
+                  onFocus={handleInputFocus}
+                  placeholder={searchType === 'video' ? '🎬 搜索电影、电视剧...' : searchType === 'netdisk' ? '💾 搜索网盘资源...' : searchType === 'youtube' ? '📺 搜索YouTube视频...' : searchType === 'bilibili' ? '📺 搜索Bilibili视频...' : '🎭 搜索演员姓名...'}
+                  autoComplete="off"
+                  className='w-full h-14 rounded-xl bg-white/90 py-4 pl-12 pr-12 text-sm text-gray-700 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-green-400 focus:bg-white border-2 border-gray-200/80 shadow-lg hover:shadow-xl focus:shadow-2xl focus:border-green-400 transition-all duration-300 dark:bg-gray-800/90 dark:text-gray-300 dark:placeholder-gray-500 dark:focus:bg-gray-800 dark:border-gray-700 dark:focus:border-green-500 backdrop-blur-sm'
+                />
 
-              {/* 清除按钮 - 美化版 */}
-              {searchQuery && (
-                <button
-                  type='button'
-                  onClick={() => {
-                    setSearchQuery('');
-                    setShowResults(false); // 隐藏搜索结果，显示搜索历史
-                    setShowSuggestions(true); // 清空后显示搜索历史
-                    document.getElementById('searchInput')?.focus();
+                {/* 清除按钮 - 美化版 */}
+                {searchQuery && (
+                  <button
+                    type='button'
+                    onClick={() => {
+                      setSearchQuery('');
+                      setShowResults(false); // 隐藏搜索结果，显示搜索历史
+                      setShowSuggestions(true); // 清空后显示搜索历史
+                      document.getElementById('searchInput')?.focus();
+                    }}
+                    className='absolute right-3.5 top-1/2 -translate-y-1/2 w-7 h-7 flex items-center justify-center rounded-full bg-gray-200/80 hover:bg-red-500 text-gray-500 hover:text-white transition-all duration-300 hover:scale-110 hover:rotate-90 dark:bg-gray-700/80 dark:text-gray-400 dark:hover:bg-red-600 shadow-sm hover:shadow-md'
+                    aria-label='清除搜索内容'
+                  >
+                    <X className='h-4 w-4' />
+                  </button>
+                )}
+
+                {/* 搜索建议 */}
+                <SearchSuggestions
+                  query={searchQuery}
+                  isVisible={showSuggestions}
+                  onSelect={handleSuggestionSelect}
+                  onClose={() => setShowSuggestions(false)}
+                  onEnterKey={() => {
+                    // 当用户按回车键时，使用搜索框的实际内容进行搜索
+                    const trimmed = searchQuery.trim().replace(/\s+/g, ' ');
+                    if (!trimmed) return;
+
+                    // 回显搜索框
+                    setSearchQuery(trimmed);
+                    setShowResults(true);
+                    setShowSuggestions(false);
+
+                    router.push(`/search?q=${encodeURIComponent(trimmed)}`);
                   }}
-                  className='absolute right-4 top-1/2 -translate-y-1/2 w-7 h-7 flex items-center justify-center rounded-full bg-gray-200/80 hover:bg-red-500 text-gray-500 hover:text-white transition-all duration-300 hover:scale-110 hover:rotate-90 dark:bg-gray-700/80 dark:text-gray-400 dark:hover:bg-red-600 shadow-sm hover:shadow-md'
-                  aria-label='清除搜索内容'
-                >
-                  <X className='h-4 w-4' />
-                </button>
-              )}
+                />
+              </div>
 
-              {/* 搜索建议 */}
-              <SearchSuggestions
-                query={searchQuery}
-                isVisible={showSuggestions}
-                onSelect={handleSuggestionSelect}
-                onClose={() => setShowSuggestions(false)}
-                onEnterKey={() => {
-                  // 当用户按回车键时，使用搜索框的实际内容进行搜索
-                  const trimmed = searchQuery.trim().replace(/\s+/g, ' ');
-                  if (!trimmed) return;
-
-                  // 回显搜索框
-                  setSearchQuery(trimmed);
-                  setShowResults(true);
-                  setShowSuggestions(false);
-
-                  router.push(`/search?q=${encodeURIComponent(trimmed)}`);
-                }}
-              />
+              {/* 显式搜索确认按钮 */}
+              <button
+                type='submit'
+                className='h-14 px-5 sm:px-6 rounded-xl bg-linear-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700 text-white font-semibold text-sm shadow-md hover:shadow-lg hover:scale-105 active:scale-95 transition-all duration-200 shrink-0 flex items-center gap-1.5'
+              >
+                <Search className='w-4 h-4' />
+                <span>搜索</span>
+              </button>
             </div>
           </form>
         </div>
