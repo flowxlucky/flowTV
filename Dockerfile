@@ -28,8 +28,10 @@ RUN pnpm install --frozen-lockfile --offline || pnpm install --frozen-lockfile |
 # 复制全部源代码
 COPY . .
 
-# 在构建阶段设置 DOCKER_BUILD，启用 standalone 输出
+# 在构建阶段设置 DOCKER_BUILD 和生产环境变量，启用 standalone 输出
 ENV DOCKER_BUILD=true
+ENV NODE_ENV=production
+ENV NEXT_TELEMETRY_DISABLED=1
 
 # 生成生产构建
 RUN pnpm run build
