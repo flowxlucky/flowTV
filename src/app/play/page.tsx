@@ -955,6 +955,7 @@ function PlayPageClient() {
   const sourceSwitchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const pendingSwitchRef = useRef<any>(null); // 保存待处理的切换请求
   const switchPromiseRef = useRef<Promise<void> | null>(null); // 当前切换的Promise
+  const backgroundSpeedTestAbortRef = useRef<AbortController | null>(null); // 后台异步测速控制器
 
   // 播放器就绪状态
   const [playerReady, setPlayerReady] = useState(false);
@@ -1554,220 +1555,237 @@ function PlayPageClient() {
     return sortedResults[0].source;
   };
 
-  // 完整测速（支持桌面与移动设备自适应并发）
+  // 完整测速（优先 720P+ 立即起播 + 3 秒兜底超时 + 剩余源后台异步续测）
   const fullSpeedTest = async (sources: SearchResult[], weights: Record<string, number> = {}): Promise<SearchResult> => {
-    // 根据设备自适应控制并发
-    const isMobile = isMobileGlobal;
-    const concurrency = isMobile ? 2 : 3;
-    // 限制最大测试数量（平衡速度和覆盖率）
-    const maxTestCount = isMobile ? 10 : 20;
-    const topPriorityCount = isMobile ? 3 : 5; // 优先级最高的高权重源数量
+    // 中止上一次遗留的后台测速任务
+    backgroundSpeedTestAbortRef.current?.abort();
+    const abortController = new AbortController();
+    backgroundSpeedTestAbortRef.current = abortController;
+    const { signal } = abortController;
 
-    // 🎯 混合策略：前5个（高权重）+ 随机15个
+    const isMobile = isMobileGlobal;
+    const concurrency = isMobile ? 3 : 4;
+    const maxTestCount = isMobile ? 10 : 20;
+    const topPriorityCount = isMobile ? 3 : 5;
+    const MAX_STARTUP_WAIT_MS = 3000; // 3秒兜底超时
+
+    // 混合策略：优先保留高权重源，其余源随后测试
     let sourcesToTest: SearchResult[];
     if (sources.length <= maxTestCount) {
-      // 如果源总数不超过20个，全部测试
       sourcesToTest = sources;
     } else {
-      // 保留前5个（已按权重排序，权重最高的在前）
       const prioritySources = sources.slice(0, topPriorityCount);
-
-      // 从剩余源中随机选择15个
       const remainingSources = sources.slice(topPriorityCount);
-      const shuffled = remainingSources.sort(() => 0.5 - Math.random());
+      const shuffled = [...remainingSources].sort(() => 0.5 - Math.random());
       const randomSources = shuffled.slice(0, maxTestCount - topPriorityCount);
-
       sourcesToTest = [...prioritySources, ...randomSources];
     }
 
-    console.log(`开始测速: 共${sources.length}个源，将测试前${topPriorityCount}个高权重源 + 随机${sourcesToTest.length - Math.min(topPriorityCount, sources.length)}个 = ${sourcesToTest.length}个`);
+    console.log(`开始快速测速: 共${sources.length}个源，起播并发=${concurrency}，3秒兜底，720P+跑通即播`);
 
-    const allResults: Array<{
+    type SpeedResultItem = {
       source: SearchResult;
       testResult: { quality: string; loadSpeed: string; pingTime: number };
-    } | null> = [];
+    };
 
-    let shouldStop = false; // 早停标志
-    let testedCount = 0; // 已测试数量
+    const isHdOrAbove = (quality: string): boolean =>
+      ['720p', '1080p', '2K', '4K'].includes(quality);
 
-    for (let i = 0; i < sourcesToTest.length && !shouldStop; i += concurrency) {
-      const batch = sourcesToTest.slice(i, i + concurrency);
-      console.log(`测速批次 ${Math.floor(i/concurrency) + 1}/${Math.ceil(sourcesToTest.length/concurrency)}: ${batch.length} 个源`);
+    // 根据已测出的成功结果计算综合评分并选出最优源
+    const pickBestFromResults = (results: SpeedResultItem[]): SearchResult => {
+      if (results.length === 0) return sources[0];
+      if (results.length === 1) return results[0].source;
 
-      const batchResults = await Promise.all(
-        batch.map(async (source, batchIndex) => {
-          try {
-            // 更新进度：显示当前正在测试的源
-            const currentIndex = i + batchIndex + 1;
+      const validSpeeds = results
+        .map((r) => {
+          const speedStr = r.testResult.loadSpeed;
+          if (speedStr === '未知' || speedStr === '测量中...') return 0;
+          const match = speedStr.match(/^([\d.]+)\s*(KB\/s|MB\/s)$/);
+          if (!match) return 0;
+          const value = parseFloat(match[1]);
+          return match[2] === 'MB\/s' ? value * 1024 : value;
+        })
+        .filter((s) => s > 0);
+      const maxSpeed = validSpeeds.length > 0 ? Math.max(...validSpeeds) : 1024;
+
+      const validPings = results.map((r) => r.testResult.pingTime).filter((p) => p > 0);
+      const minPing = validPings.length > 0 ? Math.min(...validPings) : 50;
+      const maxPing = validPings.length > 0 ? Math.max(...validPings) : 1000;
+
+      const scored = results.map((r) => {
+        const testScore = calculateSourceScore(r.testResult, maxSpeed, minPing, maxPing);
+        const weight = weights[r.source.source] ?? 50;
+        const weightBonus = 1 + (weight - 50) * 0.005;
+        return { ...r, score: testScore * weightBonus };
+      });
+      scored.sort((a, b) => b.score - a.score);
+      return scored[0].source;
+    };
+
+    const successfulResults: SpeedResultItem[] = [];
+    const testedKeys = new Set<string>();
+    let nextIndex = 0;
+    let startupResolved = false;
+    let deadlineReached = false;
+
+    const mergeVideoInfo = (source: SearchResult, info: { quality: string; loadSpeed: string; pingTime: number; hasError?: boolean }) => {
+      if (signal.aborted) return;
+      const sourceKey = `${source.source}-${source.id}`;
+      setPrecomputedVideoInfo((prev) => {
+        const next = new Map(prev);
+        next.set(sourceKey, info);
+        return next;
+      });
+    };
+
+    // 单个源测速任务
+    const testSingleSource = async (source: SearchResult, indexNum: number): Promise<SpeedResultItem | null> => {
+      if (signal.aborted) return null;
+      const sourceKey = `${source.source}-${source.id}`;
+      testedKeys.add(sourceKey);
+
+      if (!startupResolved) {
+        setSpeedTestProgress({
+          current: indexNum + 1,
+          total: sourcesToTest.length,
+          currentSource: source.source_name,
+        });
+      }
+
+      if (!source.episodes || source.episodes.length === 0) {
+        return null;
+      }
+
+      const episodeUrl = source.episodes.length > 1
+        ? source.episodes[1]
+        : source.episodes[0];
+
+      try {
+        const testResult = await getVideoResolutionFromM3u8(episodeUrl);
+        if (signal.aborted) return null;
+
+        mergeVideoInfo(source, testResult);
+
+        if (!startupResolved) {
+          setSpeedTestProgress({
+            current: indexNum + 1,
+            total: sourcesToTest.length,
+            currentSource: source.source_name,
+            result: `${testResult.quality} | ${testResult.loadSpeed} | ${testResult.pingTime}ms`,
+          });
+        }
+
+        const item: SpeedResultItem = { source, testResult };
+        successfulResults.push(item);
+        return item;
+      } catch (error) {
+        if (!signal.aborted) {
+          console.warn(`测速失败: ${source.source_name}`, error);
+          if (!startupResolved) {
             setSpeedTestProgress({
-              current: currentIndex,
-              total: sourcesToTest.length,
-              currentSource: source.source_name,
-            });
-
-            if (!source.episodes || source.episodes.length === 0) {
-              return null;
-            }
-
-            const episodeUrl = source.episodes.length > 1
-              ? source.episodes[1]
-              : source.episodes[0];
-
-            const testResult = await getVideoResolutionFromM3u8(episodeUrl);
-
-            // 更新进度：显示测试结果
-            setSpeedTestProgress({
-              current: currentIndex,
-              total: sourcesToTest.length,
-              currentSource: source.source_name,
-              result: `${testResult.quality} | ${testResult.loadSpeed} | ${testResult.pingTime}ms`,
-            });
-
-            return { source, testResult };
-          } catch (error) {
-            console.warn(`测速失败: ${source.source_name}`, error);
-
-            // 更新进度：显示失败
-            const currentIndex = i + batchIndex + 1;
-            setSpeedTestProgress({
-              current: currentIndex,
+              current: indexNum + 1,
               total: sourcesToTest.length,
               currentSource: source.source_name,
               result: '测速失败',
             });
-
-            return null;
           }
-        })
-      );
-
-      allResults.push(...batchResults);
-      testedCount += batch.length;
-
-      // 🎯 保守策略早停判断：找到高质量源
-      const successfulInBatch = batchResults.filter(Boolean) as Array<{
-        source: SearchResult;
-        testResult: { quality: string; loadSpeed: string; pingTime: number };
-      }>;
-
-      for (const result of successfulInBatch) {
-        const { quality, loadSpeed } = result.testResult;
-        const speedMatch = loadSpeed.match(/^([\d.]+)\s*MB\/s$/);
-        const speedMBps = speedMatch ? parseFloat(speedMatch[1]) : 0;
-
-        // 🛑 保守策略：只有非常优质的源才早停
-        const is4KHighSpeed = quality === '4K' && speedMBps >= 8;
-        const is2KHighSpeed = quality === '2K' && speedMBps >= 6;
-
-        if (is4KHighSpeed || is2KHighSpeed) {
-          console.log(`✓ 找到顶级优质源: ${result.source.source_name} (${quality}, ${loadSpeed})，停止测速`);
-          shouldStop = true;
-          break;
         }
+        return null;
       }
+    };
 
-      // 批次间延迟，让资源有时间清理（减少延迟时间）
-      if (i + concurrency < sourcesToTest.length && !shouldStop) {
-        await new Promise(resolve => setTimeout(resolve, 200));
-      }
-    }
+    // 启动阶段并发竞速，满足以下任一条件立即起播，其余源交由后台异步继续测速：
+    // 1. 测出清晰度 >= 720P 的可播放源
+    // 2. 达到 3 秒兜底超时且已有至少 1 个可播放源
+    // 3. 3 秒超时后首个可播放源跑通
+    const selectedSource = await new Promise<SearchResult>((resolve) => {
+      let activeWorkers = 0;
+      let timeoutId: ReturnType<typeof setTimeout> | null = null;
 
-    // 等待所有测速完成，包含成功和失败的结果
-    // 保存所有测速结果到 precomputedVideoInfo，供 EpisodeSelector 使用（包含错误结果）
-    const newVideoInfoMap = new Map<
-      string,
-      {
-        quality: string;
-        loadSpeed: string;
-        pingTime: number;
-        hasError?: boolean;
-      }
-    >();
-    allResults.forEach((result, index) => {
-      const source = sources[index];
-      const sourceKey = `${source.source}-${source.id}`;
+      const finishStartup = (reason: string) => {
+        if (startupResolved) return;
+        startupResolved = true;
+        if (timeoutId) {
+          clearTimeout(timeoutId);
+          timeoutId = null;
+        }
+        setSpeedTestProgress(null);
 
-      if (result) {
-        // 成功的结果
-        newVideoInfoMap.set(sourceKey, result.testResult);
-      }
-    });
-
-    // 过滤出成功的结果用于优选计算
-    const successfulResults = allResults.filter(Boolean) as Array<{
-      source: SearchResult;
-      testResult: { quality: string; loadSpeed: string; pingTime: number };
-    }>;
-
-    setPrecomputedVideoInfo(newVideoInfoMap);
-
-    if (successfulResults.length === 0) {
-      console.warn('所有播放源测速都失败，使用第一个播放源');
-      return sources[0];
-    }
-
-    // 找出所有有效速度的最大值，用于线性映射
-    const validSpeeds = successfulResults
-      .map((result) => {
-        const speedStr = result.testResult.loadSpeed;
-        if (speedStr === '未知' || speedStr === '测量中...') return 0;
-
-        const match = speedStr.match(/^([\d.]+)\s*(KB\/s|MB\/s)$/);
-        if (!match) return 0;
-
-        const value = parseFloat(match[1]);
-        const unit = match[2];
-        return unit === 'MB/s' ? value * 1024 : value; // 统一转换为 KB/s
-      })
-      .filter((speed) => speed > 0);
-
-    const maxSpeed = validSpeeds.length > 0 ? Math.max(...validSpeeds) : 1024; // 默认1MB/s作为基准
-
-    // 找出所有有效延迟的最小值和最大值，用于线性映射
-    const validPings = successfulResults
-      .map((result) => result.testResult.pingTime)
-      .filter((ping) => ping > 0);
-
-    const minPing = validPings.length > 0 ? Math.min(...validPings) : 50;
-    const maxPing = validPings.length > 0 ? Math.max(...validPings) : 1000;
-
-    // 计算每个结果的评分（结合测速结果和权重）
-    const resultsWithScore = successfulResults.map((result) => {
-      const testScore = calculateSourceScore(
-        result.testResult,
-        maxSpeed,
-        minPing,
-        maxPing
-      );
-      const weight = weights[result.source.source] ?? 50;
-      // 权重加成：权重每增加10分，总分增加5%
-      // 例如：权重100的源比权重50的源，总分高出25%
-      const weightBonus = 1 + (weight - 50) * 0.005;
-      const finalScore = testScore * weightBonus;
-      return {
-        ...result,
-        score: finalScore,
-        testScore,
-        weight,
+        const picked = pickBestFromResults(successfulResults);
+        console.log(`⚡ 快速起播触发 (${reason}): ${picked.source_name}，已测 ${testedKeys.size}/${sourcesToTest.length} 个源，其余源转入后台测速`);
+        resolve(picked);
       };
+
+      // 3 秒兜底超时定时器
+      timeoutId = setTimeout(() => {
+        deadlineReached = true;
+        if (!startupResolved && successfulResults.length > 0) {
+          finishStartup('3秒兜底超时，取当前最优可用源');
+        }
+      }, MAX_STARTUP_WAIT_MS);
+
+      const spawnWorker = () => {
+        if (signal.aborted || startupResolved || nextIndex >= sourcesToTest.length) {
+          if (activeWorkers === 0 && !startupResolved) {
+            finishStartup(successfulResults.length > 0 ? '全部测速完成' : '全部测速失败，使用默认源');
+          }
+          return;
+        }
+
+        const currentIdx = nextIndex++;
+        const source = sourcesToTest[currentIdx];
+        activeWorkers++;
+
+        testSingleSource(source, currentIdx).then((item) => {
+          activeWorkers--;
+          if (signal.aborted) {
+            if (!startupResolved) finishStartup('测速已取消');
+            return;
+          }
+
+          if (!startupResolved && item) {
+            if (isHdOrAbove(item.testResult.quality)) {
+              finishStartup(`720P+ 跑通 (${item.testResult.quality})`);
+              return;
+            }
+            if (deadlineReached) {
+              finishStartup('超时后首个可用源跑通');
+              return;
+            }
+          }
+
+          spawnWorker();
+        });
+      };
+
+      const initialWorkers = Math.min(concurrency, sourcesToTest.length);
+      for (let w = 0; w < initialWorkers; w++) {
+        spawnWorker();
+      }
     });
 
-    // 按综合评分排序，选择最佳播放源
-    resultsWithScore.sort((a, b) => b.score - a.score);
+    // 后台异步续测剩余未测源（不阻塞播放，结果实时更新到换源面板）
+    const remainingForBackground = sourcesToTest.slice(nextIndex);
+    if (remainingForBackground.length > 0 && !signal.aborted) {
+      const bgConcurrency = isMobile ? 2 : 3;
+      (async () => {
+        console.log(`🔄 后台开始续测剩余 ${remainingForBackground.length} 个播放源...`);
+        for (let i = 0; i < remainingForBackground.length && !signal.aborted; i += bgConcurrency) {
+          const batch = remainingForBackground.slice(i, i + bgConcurrency);
+          await Promise.all(
+            batch.map((src, idx) => testSingleSource(src, nextIndex + i + idx))
+          );
+          if (i + bgConcurrency < remainingForBackground.length && !signal.aborted) {
+            await new Promise((r) => setTimeout(r, 150));
+          }
+        }
+        if (!signal.aborted) {
+          console.log('✅ 后台剩余播放源测速全部完成');
+        }
+      })();
+    }
 
-    console.log('播放源评分排序结果（含权重加成）:');
-    resultsWithScore.forEach((result, index) => {
-      console.log(
-        `${index + 1}. ${result.source.source_name
-        } - 总分: ${result.score.toFixed(2)} (测速分: ${result.testScore.toFixed(2)}, 权重: ${result.weight}) [${result.testResult.quality}, ${result.testResult.loadSpeed
-        }, ${result.testResult.pingTime}ms]`
-      );
-    });
-
-    // 清除测速进度状态
-    setSpeedTestProgress(null);
-
-    return resultsWithScore[0].source;
+    return selectedSource;
   };
 
   // 计算播放源综合评分
@@ -3267,8 +3285,9 @@ function PlayPageClient() {
         return;
       }
 
-      // 🚀 设置换源标识，防止useEffect重复处理弹幕
+      // 🚀 设置换源标识，防止useEffect重复处理弹幕，并中止后台测速
       isSourceChangingRef.current = true;
+      backgroundSpeedTestAbortRef.current?.abort();
 
       // 显示换源加载状态
       setVideoLoadingStage('sourceChanging');
@@ -3502,7 +3521,8 @@ function PlayPageClient() {
   // 🚀 组件卸载时清理所有定时器和状态
   useEffect(() => {
     return () => {
-      // 清理所有定时器
+      // 清理所有定时器与后台测速
+      backgroundSpeedTestAbortRef.current?.abort();
       if (episodeSwitchTimeoutRef.current) {
         clearTimeout(episodeSwitchTimeoutRef.current);
       }
