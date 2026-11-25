@@ -155,6 +155,9 @@ function savePreferredAudioLang(rawLang?: string) {
   }
 }
 
+// 记录手动换源目标，避免组件因 URL key 变化重新挂载后再次触发自动测速优选
+let pendingManualSourceSwitch: { source: string; id: string; timestamp: number } | null = null;
+
 function escapeAudioTrackHtml(rawValue: string): string {
   return rawValue
     .replaceAll('&', '&amp;')
@@ -3112,8 +3115,15 @@ function PlayPageClient() {
         detailData = sourcesInfo[0];
       }
 
+      const isManualSourceSwitch =
+        pendingManualSourceSwitch !== null &&
+        pendingManualSourceSwitch.source === currentSource &&
+        String(pendingManualSourceSwitch.id) === String(currentId) &&
+        Date.now() - pendingManualSourceSwitch.timestamp < 10000;
+
       // 首次进入播放页面：只要开启了优选且存在多个可用源，自动再测一次速，选择最优的播放源
-      if (optimizationEnabled && sourcesInfo.length > 1) {
+      // 手动换源后重新挂载时跳过自动测速优选，直接使用用户选择的播放源
+      if (optimizationEnabled && !isManualSourceSwitch && sourcesInfo.length > 1) {
         setLoadingStage('preferring');
         setLoadingMessage('⚡ 正在优选最佳播放源...');
 
@@ -3188,6 +3198,9 @@ function PlayPageClient() {
 
       // 短暂延迟让用户看到完成状态
       setTimeout(() => {
+        if (isManualSourceSwitch) {
+          pendingManualSourceSwitch = null;
+        }
         setLoading(false);
       }, 1000);
     };
@@ -3371,12 +3384,20 @@ function PlayPageClient() {
       // 🔥 由于组件会重新挂载，不再需要设置 resumeTimeRef（进度已保存到 sessionStorage）
       // 组件重新挂载后会自动从 sessionStorage 恢复进度
 
+      // 标记本次为手动换源，组件因 URL key 变化重新挂载时跳过自动测速优选
+      pendingManualSourceSwitch = {
+        source: newSource,
+        id: newId,
+        timestamp: Date.now(),
+      };
+
       // 更新URL参数（不刷新页面）
       const newUrl = new URL(window.location.href);
       newUrl.searchParams.set('source', newSource);
       newUrl.searchParams.set('id', newId);
       newUrl.searchParams.set('year', detailToUse.year);
       newUrl.searchParams.set('index', targetIndex.toString());  // 🔥 同步URL的index参数
+      newUrl.searchParams.delete('prefer');
       window.history.replaceState({}, '', newUrl.toString());
 
       setVideoTitle(detailToUse.title || newTitle);
