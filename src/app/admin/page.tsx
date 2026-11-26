@@ -47,7 +47,7 @@ import {
   X,
 } from 'lucide-react';
 import { GripVertical, KeyRound, MessageSquare } from 'lucide-react';
-import { Suspense, useCallback, useEffect, useMemo, useState } from 'react';
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 
 import { AdminConfig, AdminConfigResult } from '@/lib/admin.types';
