@@ -12,6 +12,8 @@ export interface ApiSite {
   api: string;
   name: string;
   detail?: string;
+  play_domain?: string;
+  pic_domain?: string;
 }
 
 export interface LiveCfg {
@@ -759,6 +761,8 @@ export async function getAvailableApiSites(user?: string): Promise<ApiSite[]> {
       name: s.name,
       api: s.api,
       detail: s.detail,
+      play_domain: s.play_domain,
+      pic_domain: s.pic_domain,
     }));
     return applyVideoProxy(userSites, config);
   }
@@ -781,6 +785,8 @@ export async function getAvailableApiSites(user?: string): Promise<ApiSite[]> {
         name: s.name,
         api: s.api,
         detail: s.detail,
+        play_domain: s.play_domain,
+        pic_domain: s.pic_domain,
       }));
       return applyVideoProxy(tagSites, config);
     }

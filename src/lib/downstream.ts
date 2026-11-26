@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 import { API_CONFIG, ApiSite, getConfig } from '@/lib/config';
+import { rewriteUrlDomain } from '@/lib/domain-rewrite';
 import { getCachedSearchPage, setCachedSearchPage } from '@/lib/search-cache';
 import { SearchResult } from '@/lib/types';
 import { cleanHtmlTags } from '@/lib/utils';
@@ -94,7 +95,9 @@ async function searchWithCache(
               episode_title_url[1].endsWith('.m3u8')
             ) {
               matchTitles.push(episode_title_url[0]);
-              matchEpisodes.push(episode_title_url[1]);
+              matchEpisodes.push(
+                rewriteUrlDomain(episode_title_url[1], apiSite.play_domain)
+              );
             }
           });
           if (matchEpisodes.length > episodes.length) {
@@ -107,7 +110,7 @@ async function searchWithCache(
       return {
         id: item.vod_id.toString(),
         title: item.vod_name.trim().replace(/\s+/g, ' '),
-        poster: item.vod_pic?.trim() || '', // 确保poster为有效字符串，过滤空白
+        poster: rewriteUrlDomain(item.vod_pic?.trim() || '', apiSite.pic_domain), // 确保poster为有效字符串，过滤空白并应用图片域名替换
         episodes,
         episodes_titles: titles,
         source: apiSite.key,
@@ -524,7 +527,9 @@ export async function getDetailFromApi(
           episode_title_url[1].endsWith('.m3u8')
         ) {
           matchTitles.push(episode_title_url[0]);
-          matchEpisodes.push(episode_title_url[1]);
+          matchEpisodes.push(
+            rewriteUrlDomain(episode_title_url[1], apiSite.play_domain)
+          );
         }
       });
       if (matchEpisodes.length > episodes.length) {
@@ -537,13 +542,18 @@ export async function getDetailFromApi(
   // 如果播放源为空，则尝试从内容中解析 m3u8
   if (episodes.length === 0 && videoDetail.vod_content) {
     const matches = videoDetail.vod_content.match(M3U8_PATTERN) || [];
-    episodes = matches.map((link: string) => link.replace(/^\$/, ''));
+    episodes = matches.map((link: string) =>
+      rewriteUrlDomain(link.replace(/^\$/, ''), apiSite.play_domain)
+    );
   }
 
   return {
     id: id.toString(),
     title: videoDetail.vod_name,
-    poster: videoDetail.vod_pic?.trim() || '', // 确保poster为有效字符串，过滤空白
+    poster: rewriteUrlDomain(
+      videoDetail.vod_pic?.trim() || '',
+      apiSite.pic_domain
+    ), // 确保poster为有效字符串，过滤空白并应用图片域名替换
     episodes,
     episodes_titles: titles,
     source: apiSite.key,
@@ -597,7 +607,8 @@ async function handleSpecialSourceDetail(
   matches = Array.from(new Set(matches)).map((link: string) => {
     link = link.substring(1); // 去掉开头的 $
     const parenIndex = link.indexOf('(');
-    return parenIndex > 0 ? link.substring(0, parenIndex) : link;
+    const cleanLink = parenIndex > 0 ? link.substring(0, parenIndex) : link;
+    return rewriteUrlDomain(cleanLink, apiSite.play_domain);
   });
 
   // 根据 matches 数量生成剧集标题
@@ -617,7 +628,9 @@ async function handleSpecialSourceDetail(
 
   // 提取封面
   const coverMatch = html.match(/(https?:\/\/[^"'\s]+?\.jpg)/g);
-  const coverUrl = coverMatch ? coverMatch[0].trim() : '';
+  const coverUrl = coverMatch
+    ? rewriteUrlDomain(coverMatch[0].trim(), apiSite.pic_domain)
+    : '';
 
   // 提取年份
   const yearMatch = html.match(/>(\d{4})</);

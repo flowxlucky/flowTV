@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 
 import { getCacheTime, getConfig } from '@/lib/config';
+import { rewriteUrlDomain } from '@/lib/domain-rewrite';
 import { recordRequest, getDbQueryCount, resetDbQueryCount } from '@/lib/performance-monitor';
 import { DEFAULT_USER_AGENT } from '@/lib/user-agent';
 
@@ -12,7 +13,8 @@ export const fetchCache = 'force-no-store';
 // 从单个短剧源获取数据（通过分类名称查找）
 async function fetchFromShortDramaSource(
   api: string,
-  size: number
+  size: number,
+  picDomain?: string
 ) {
   // Step 1: 获取分类列表，找到"短剧"分类的ID
   const listUrl = `${api}?ac=list`;
@@ -66,13 +68,13 @@ async function fetchFromShortDramaSource(
   return items.slice(0, size).map((item: any) => ({
     id: item.vod_id,
     name: item.vod_name,
-    cover: item.vod_pic || '',
+    cover: rewriteUrlDomain(item.vod_pic || '', picDomain),
     update_time: item.vod_time || new Date().toISOString(),
     score: parseFloat(item.vod_score) || 0,
     episode_count: parseInt(item.vod_remarks?.replace(/[^\d]/g, '') || '1'),
     description: item.vod_content || item.vod_blurb || '',
     author: item.vod_actor || '',
-    backdrop: item.vod_pic_slide || item.vod_pic || '',
+    backdrop: rewriteUrlDomain(item.vod_pic_slide || item.vod_pic || '', picDomain),
     vote_average: parseFloat(item.vod_score) || 0,
   }));
 }
@@ -107,7 +109,7 @@ async function getRecommendedShortDramasInternal(
     const results = await Promise.allSettled(
       shortDramaSources.map(source => {
         console.log(`🔄 请求短剧源: ${source.name}`);
-        return fetchFromShortDramaSource(source.api, size);
+        return fetchFromShortDramaSource(source.api, size, source.pic_domain);
       })
     );
 

@@ -326,6 +326,8 @@ interface DataSource {
   is_adult?: boolean;
   type?: 'vod' | 'shortdrama'; // 视频源类型：vod=普通视频，shortdrama=短剧
   weight?: number; // 优先级权重：0-100，数字越大优先级越高，默认50
+  play_domain?: string; // 替换后的播放域名
+  pic_domain?: string; // 替换后的图片域名
 }
 
 // 直播源数据类型
@@ -2840,6 +2842,25 @@ const VideoSourceConfig = ({
   // 编辑视频源状态
   const [editingSource, setEditingSource] = useState<DataSource | null>(null);
 
+  // 域名替换弹窗状态
+  const [domainEditingSource, setDomainEditingSource] = useState<{
+    key: string;
+    name: string;
+    play_domain: string;
+    pic_domain: string;
+  } | null>(null);
+  const domainDialogRef = useRef<HTMLDialogElement | null>(null);
+
+  useEffect(() => {
+    const dialog = domainDialogRef.current;
+    if (!dialog) return;
+    if (domainEditingSource) {
+      if (!dialog.open) dialog.showModal();
+    } else if (dialog.open) {
+      dialog.close();
+    }
+  }, [domainEditingSource]);
+
   // 🔑 普通视频源代理配置
   const [videoProxySettings, setVideoProxySettings] = useState({
     enabled: false,
@@ -3238,6 +3259,32 @@ const VideoSourceConfig = ({
     });
   };
 
+  // 打开域名替换弹窗
+  const handleOpenDomainModal = (source: DataSource) => {
+    setDomainEditingSource({
+      key: source.key,
+      name: source.name,
+      play_domain: source.play_domain || '',
+      pic_domain: source.pic_domain || '',
+    });
+  };
+
+  // 保存域名替换配置
+  const handleSaveDomainReplacement = () => {
+    if (!domainEditingSource) return;
+    withLoading(`editDomain_${domainEditingSource.key}`, async () => {
+      await callSourceApi({
+        action: 'update_domain',
+        key: domainEditingSource.key,
+        play_domain: domainEditingSource.play_domain.trim(),
+        pic_domain: domainEditingSource.pic_domain.trim(),
+      });
+      setDomainEditingSource(null);
+    }).catch(() => {
+      console.error('保存域名替换配置失败', domainEditingSource);
+    });
+  };
+
   const handleDragEnd = (event: any) => {
     const { active, over } = event;
     if (!over || active.id === over.id) return;
@@ -3443,6 +3490,26 @@ const VideoSourceConfig = ({
           title={source.detail || '-'}
         >
           {source.detail || '-'}
+        </td>
+        <td className='px-4 py-4 whitespace-nowrap text-center'>
+          <div className='inline-flex items-center gap-1.5'>
+            <button
+              type='button'
+              onClick={() => handleOpenDomainModal(source)}
+              className='px-2.5 py-1 text-xs font-medium rounded-md bg-indigo-50 text-indigo-700 hover:bg-indigo-100 dark:bg-indigo-900/30 dark:text-indigo-300 dark:hover:bg-indigo-900/50 transition-colors cursor-pointer'
+              title='配置视频与图片域名替换'
+            >
+              替换
+            </button>
+            {(source.play_domain?.trim() || source.pic_domain?.trim()) && (
+              <span
+                className='text-green-600 dark:text-green-400 font-bold text-sm'
+                title={`已配置域名替换${source.play_domain ? ` | 视频: ${source.play_domain}` : ''}${source.pic_domain ? ` | 图片: ${source.pic_domain}` : ''}`}
+              >
+                ✓
+              </span>
+            )}
+          </div>
         </td>
         <td className='px-6 py-4 whitespace-nowrap max-w-[1rem]'>
           <span
@@ -4386,6 +4453,94 @@ const VideoSourceConfig = ({
         document.body
       )}
 
+      {/* 域名替换弹窗（原生 dialog 顶层模态） */}
+      <dialog
+        ref={domainDialogRef}
+        onClose={() => setDomainEditingSource(null)}
+        onClick={(e) => {
+          if (e.target === domainDialogRef.current) {
+            setDomainEditingSource(null);
+          }
+        }}
+        className='m-auto p-0 rounded-lg shadow-xl max-w-lg w-[calc(100%-2rem)] bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 backdrop:bg-black/50 border border-gray-200 dark:border-gray-700'
+      >
+        {domainEditingSource && (
+          <div>
+            <div className='p-5 border-b border-gray-200 dark:border-gray-700'>
+              <h3 className='text-lg font-semibold'>
+                域名替换设置: {domainEditingSource.name}
+              </h3>
+              <p className='mt-1 text-xs text-gray-500 dark:text-gray-400'>
+                填写替换后的新域名（支持直接填域名或带 http/https 协议，自动保留原路径；留空表示不替换）。
+              </p>
+            </div>
+            <div className='p-5 space-y-4'>
+              <div className='flex items-center gap-3'>
+                <label
+                  htmlFor='domain-play-input'
+                  className='w-24 shrink-0 text-sm font-medium text-gray-700 dark:text-gray-300'
+                >
+                  视频域名：
+                </label>
+                <input
+                  id='domain-play-input'
+                  type='text'
+                  value={domainEditingSource.play_domain}
+                  onChange={(e) =>
+                    setDomainEditingSource((prev) =>
+                      prev ? { ...prev, play_domain: e.target.value } : null
+                    )
+                  }
+                  placeholder='例如：fqm3u8.cc 或 https://fqm3u8.cc'
+                  className='flex-1 px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 focus:border-blue-500'
+                />
+              </div>
+              <div className='flex items-center gap-3'>
+                <label
+                  htmlFor='domain-pic-input'
+                  className='w-24 shrink-0 text-sm font-medium text-gray-700 dark:text-gray-300'
+                >
+                  图片域名：
+                </label>
+                <input
+                  id='domain-pic-input'
+                  type='text'
+                  value={domainEditingSource.pic_domain}
+                  onChange={(e) =>
+                    setDomainEditingSource((prev) =>
+                      prev ? { ...prev, pic_domain: e.target.value } : null
+                    )
+                  }
+                  placeholder='例如：fqjpg12.top 或 https://fqjpg12.top'
+                  className='flex-1 px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 focus:border-blue-500'
+                />
+              </div>
+              <div className='flex justify-end space-x-3 pt-4 border-t border-gray-200 dark:border-gray-700'>
+                <button
+                  type='button'
+                  onClick={() => setDomainEditingSource(null)}
+                  className={buttonStyles.secondary}
+                >
+                  取消
+                </button>
+                <button
+                  type='button'
+                  onClick={handleSaveDomainReplacement}
+                  disabled={isLoading(`editDomain_${domainEditingSource.key}`)}
+                  className={
+                    isLoading(`editDomain_${domainEditingSource.key}`)
+                      ? buttonStyles.disabled
+                      : buttonStyles.primary
+                  }
+                >
+                  {isLoading(`editDomain_${domainEditingSource.key}`) ? '保存中...' : '确认修改'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+      </dialog>
+
 
 
       {/* 视频源表格 */}
@@ -4413,6 +4568,9 @@ const VideoSourceConfig = ({
               </th>
               <th className='px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider'>
                 Detail 地址
+              </th>
+              <th className='px-4 py-3 text-center text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider whitespace-nowrap'>
+                域名替换
               </th>
               <th className='px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider'>
                 状态

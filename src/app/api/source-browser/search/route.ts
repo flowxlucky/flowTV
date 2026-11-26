@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 
 import { getAuthInfoFromCookie } from '@/lib/auth';
 import { API_CONFIG, getAvailableApiSites } from '@/lib/config';
+import { rewriteUrlDomain } from '@/lib/domain-rewrite';
 
 export const runtime = 'nodejs';
 
@@ -83,7 +84,7 @@ export async function GET(request: NextRequest) {
       .map((r) => ({
         id: String(r.vod_id ?? r.id ?? ''),
         title: String(r.vod_name ?? r.title ?? ''),
-        poster: String(r.vod_pic ?? r.pic ?? ''),
+        poster: rewriteUrlDomain(String(r.vod_pic ?? r.pic ?? ''), source.pic_domain),
         year: String(r.vod_year ?? r.year ?? ''),
         type_name: String(r.type_name ?? ''),
         remarks: String(r.vod_remarks ?? r.remarks ?? ''),

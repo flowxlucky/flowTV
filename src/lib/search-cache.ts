@@ -142,3 +142,15 @@ function startAutoCleanup(): void {
     cleanupTimer.unref();
   }
 }
+
+/**
+ * 清理指定视频源的搜索缓存（如修改域名替换配置后调用）
+ */
+export function clearSourceSearchCache(sourceKey: string): void {
+  const prefix = `${sourceKey}::`;
+  Array.from(SEARCH_CACHE.keys()).forEach((key) => {
+    if (key.startsWith(prefix)) {
+      SEARCH_CACHE.delete(key);
+    }
+  });
+}

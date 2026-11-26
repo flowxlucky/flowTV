@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 
 import { API_CONFIG, getConfig } from '@/lib/config';
 import { getAdminRoleFromRequest } from '@/lib/admin-auth';
+import { rewriteUrlDomain, rewriteVodPlayUrl } from '@/lib/domain-rewrite';
 
 export const runtime = 'nodejs';
 
@@ -137,8 +138,27 @@ export async function GET(request: NextRequest) {
         );
       }
 
-      // 提取搜索结果
-      const results = data.list || data.data || [];
+      // 提取搜索结果并应用域名替换
+      const rawResults = data.list || data.data || [];
+      const results = Array.isArray(rawResults)
+        ? rawResults.map((item: any) => ({
+            ...item,
+            ...(item.vod_pic
+              ? { vod_pic: rewriteUrlDomain(item.vod_pic, targetSource.pic_domain) }
+              : {}),
+            ...(item.poster
+              ? { poster: rewriteUrlDomain(item.poster, targetSource.pic_domain) }
+              : {}),
+            ...(item.vod_play_url
+              ? {
+                  vod_play_url: rewriteVodPlayUrl(
+                    item.vod_play_url,
+                    targetSource.play_domain
+                  ),
+                }
+              : {}),
+          }))
+        : [];
 
       // 质量与性能指标
       const durationMs = Date.now() - startedAt;

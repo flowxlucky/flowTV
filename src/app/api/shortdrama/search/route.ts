@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 
 import { getConfig } from '@/lib/config';
+import { rewriteUrlDomain } from '@/lib/domain-rewrite';
 import { recordRequest, getDbQueryCount, resetDbQueryCount } from '@/lib/performance-monitor';
 import { DEFAULT_USER_AGENT } from '@/lib/user-agent';
 
@@ -14,7 +15,8 @@ async function searchFromSource(
   api: string,
   query: string,
   page: number,
-  size: number
+  size: number,
+  picDomain?: string
 ) {
   // Step 1: 获取分类列表，找到"短剧"分类的ID
   const listUrl = `${api}?ac=list`;
@@ -71,13 +73,13 @@ async function searchFromSource(
   const list = limitedItems.map((item: any) => ({
     id: item.vod_id,
     name: item.vod_name,
-    cover: item.vod_pic || '',
+    cover: rewriteUrlDomain(item.vod_pic || '', picDomain),
     update_time: item.vod_time || new Date().toISOString(),
     score: parseFloat(item.vod_score) || 0,
     episode_count: parseInt(item.vod_remarks?.replace(/[^\d]/g, '') || '1'),
     description: item.vod_content || item.vod_blurb || '',
     author: item.vod_actor || '',
-    backdrop: item.vod_pic_slide || item.vod_pic || '',
+    backdrop: rewriteUrlDomain(item.vod_pic_slide || item.vod_pic || '', picDomain),
     vote_average: parseFloat(item.vod_score) || 0,
   }));
 
@@ -114,7 +116,7 @@ async function searchShortDramasInternal(
     // 有配置短剧源，聚合所有源的搜索结果
     const results = await Promise.allSettled(
       shortDramaSources.map(source =>
-        searchFromSource(source.api, query, page, size)
+        searchFromSource(source.api, query, page, size, source.pic_domain)
       )
     );
 

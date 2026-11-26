@@ -79,6 +79,8 @@ export interface AdminConfig {
     is_adult?: boolean;
     type?: 'vod' | 'shortdrama'; // 视频源类型：vod=普通视频，shortdrama=短剧（系统会自动查找"短剧"分类）
     weight?: number; // 优先级权重：0-100，数字越大优先级越高，默认50。播放时先按权重排序，同权重再按测速结果
+    play_domain?: string; // 替换后的播放域名
+    pic_domain?: string; // 替换后的图片域名
   }[];
   CustomCategories: {
     name?: string;

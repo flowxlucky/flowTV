@@ -5,11 +5,12 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getAuthInfoFromCookie } from '@/lib/auth';
 import { clearConfigCache, getConfig } from '@/lib/config';
 import { db } from '@/lib/db';
+import { clearSourceSearchCache } from '@/lib/search-cache';
 
 export const runtime = 'nodejs';
 
 // 支持的操作类型
-type Action = 'add' | 'update' | 'disable' | 'enable' | 'delete' | 'sort' | 'batch_disable' | 'batch_enable' | 'batch_delete' | 'update_adult' | 'batch_mark_adult' | 'batch_unmark_adult' | 'batch_mark_shortdrama' | 'batch_mark_vod' | 'update_weight';
+type Action = 'add' | 'update' | 'update_domain' | 'disable' | 'enable' | 'delete' | 'sort' | 'batch_disable' | 'batch_enable' | 'batch_delete' | 'update_adult' | 'batch_mark_adult' | 'batch_unmark_adult' | 'batch_mark_shortdrama' | 'batch_mark_vod' | 'update_weight';
 
 interface BaseBody {
   action?: Action;
@@ -37,7 +38,7 @@ export async function POST(request: NextRequest) {
     const username = authInfo.username;
 
     // 基础校验
-    const ACTIONS: Action[] = ['add', 'update', 'disable', 'enable', 'delete', 'sort', 'batch_disable', 'batch_enable', 'batch_delete', 'update_adult', 'batch_mark_adult', 'batch_unmark_adult', 'batch_mark_shortdrama', 'batch_mark_vod', 'update_weight'];
+    const ACTIONS: Action[] = ['add', 'update', 'update_domain', 'disable', 'enable', 'delete', 'sort', 'batch_disable', 'batch_enable', 'batch_delete', 'update_adult', 'batch_mark_adult', 'batch_unmark_adult', 'batch_mark_shortdrama', 'batch_mark_vod', 'update_weight'];
     if (!username || !action || !ACTIONS.includes(action)) {
       return NextResponse.json({ error: '参数格式错误' }, { status: 400 });
     }
@@ -108,6 +109,38 @@ export async function POST(request: NextRequest) {
         if (is_adult !== undefined) entry.is_adult = is_adult;
         if (type !== undefined) entry.type = type;
         if (weight !== undefined) entry.weight = Math.max(0, Math.min(100, weight));
+        break;
+      }
+      case 'update_domain': {
+        const { key, play_domain, pic_domain } = body as {
+          key?: string;
+          play_domain?: string;
+          pic_domain?: string;
+        };
+        if (!key) {
+          return NextResponse.json({ error: '缺少 key 参数' }, { status: 400 });
+        }
+        const entry = adminConfig.SourceConfig.find((s) => s.key === key);
+        if (!entry) {
+          return NextResponse.json({ error: '源不存在' }, { status: 404 });
+        }
+        if (play_domain !== undefined) {
+          const trimmed = play_domain.trim();
+          if (trimmed) {
+            entry.play_domain = trimmed;
+          } else {
+            delete entry.play_domain;
+          }
+        }
+        if (pic_domain !== undefined) {
+          const trimmed = pic_domain.trim();
+          if (trimmed) {
+            entry.pic_domain = trimmed;
+          } else {
+            delete entry.pic_domain;
+          }
+        }
+        clearSourceSearchCache(key);
         break;
       }
       case 'disable': {
